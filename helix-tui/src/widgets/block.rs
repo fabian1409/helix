@@ -1,10 +1,13 @@
 use crate::{
     buffer::Buffer,
-    symbols::line,
+    symbols::line::{self},
     text::Spans,
     widgets::{Borders, Widget},
 };
-use helix_view::graphics::{Rect, Style};
+use helix_view::{
+    editor::BorderSymbols,
+    graphics::{Rect, Style},
+};
 
 /// Border render type. Defaults to [`BorderType::Plain`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -50,11 +53,10 @@ pub struct Block<'a> {
     borders: Borders,
     /// Border style
     border_style: Style,
-    /// Type of the border. The default is plain lines but one can choose to have rounded corners
-    /// or doubled lines instead.
-    border_type: BorderType,
     /// Widget style
     style: Style,
+    /// Border symbols
+    border_symbols: Option<BorderSymbols>,
 }
 
 impl<'a> Block<'a> {
@@ -63,8 +65,8 @@ impl<'a> Block<'a> {
             title: None,
             borders: Borders::empty(),
             border_style: Style::new(),
-            border_type: BorderType::Plain,
             style: Style::new(),
+            border_symbols: None,
         }
     }
 
@@ -97,8 +99,8 @@ impl<'a> Block<'a> {
         self
     }
 
-    pub const fn border_type(mut self, border_type: BorderType) -> Block<'a> {
-        self.border_type = border_type;
+    pub fn border_symbols(mut self, symbols: BorderSymbols) -> Block<'a> {
+        self.border_symbols = Some(symbols);
         self
     }
 
@@ -129,20 +131,20 @@ impl Widget for Block<'_> {
             return;
         }
         buf.set_style(area, self.style);
-        let symbols = BorderType::line_symbols(self.border_type);
+        let symbols = self.border_symbols.unwrap_or_default();
 
         // Sides
         if self.borders.intersects(Borders::LEFT) {
             for y in area.top()..area.bottom() {
                 buf[(area.left(), y)]
-                    .set_symbol(symbols.vertical)
+                    .set_char(symbols.vertical)
                     .set_style(self.border_style);
             }
         }
         if self.borders.intersects(Borders::TOP) {
             for x in area.left()..area.right() {
                 buf[(x, area.top())]
-                    .set_symbol(symbols.horizontal)
+                    .set_char(symbols.horizontal)
                     .set_style(self.border_style);
             }
         }
@@ -150,7 +152,7 @@ impl Widget for Block<'_> {
             let x = area.right() - 1;
             for y in area.top()..area.bottom() {
                 buf[(x, y)]
-                    .set_symbol(symbols.vertical)
+                    .set_char(symbols.vertical)
                     .set_style(self.border_style);
             }
         }
@@ -158,7 +160,7 @@ impl Widget for Block<'_> {
             let y = area.bottom() - 1;
             for x in area.left()..area.right() {
                 buf[(x, y)]
-                    .set_symbol(symbols.horizontal)
+                    .set_char(symbols.horizontal)
                     .set_style(self.border_style);
             }
         }
@@ -166,22 +168,22 @@ impl Widget for Block<'_> {
         // Corners
         if self.borders.contains(Borders::RIGHT | Borders::BOTTOM) {
             buf[(area.right() - 1, area.bottom() - 1)]
-                .set_symbol(symbols.bottom_right)
+                .set_char(symbols.bottom_right)
                 .set_style(self.border_style);
         }
         if self.borders.contains(Borders::RIGHT | Borders::TOP) {
             buf[(area.right() - 1, area.top())]
-                .set_symbol(symbols.top_right)
+                .set_char(symbols.top_right)
                 .set_style(self.border_style);
         }
         if self.borders.contains(Borders::LEFT | Borders::BOTTOM) {
             buf[(area.left(), area.bottom() - 1)]
-                .set_symbol(symbols.bottom_left)
+                .set_char(symbols.bottom_left)
                 .set_style(self.border_style);
         }
         if self.borders.contains(Borders::LEFT | Borders::TOP) {
             buf[(area.left(), area.top())]
-                .set_symbol(symbols.top_left)
+                .set_char(symbols.top_left)
                 .set_style(self.border_style);
         }
 

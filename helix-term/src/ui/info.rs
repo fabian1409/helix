@@ -23,9 +23,11 @@ impl Component for Info {
         ));
         surface.clear_with(area, popup_style);
 
+        let symbols = cx.editor.config().borders;
         let block = Block::bordered()
             .title(self.title.as_str())
-            .border_style(popup_style);
+            .border_style(popup_style)
+            .border_symbols(symbols);
 
         let margin = Margin::horizontal(1);
         let inner = block.inner(area).inner(margin);

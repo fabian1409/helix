@@ -521,7 +521,8 @@ impl Component for Completion {
 
         if cx.editor.popup_border() {
             use tui::widgets::{Block, Widget};
-            Widget::render(Block::bordered(), doc_area, surface);
+            let symbols = cx.editor.config().borders;
+            Widget::render(Block::bordered().border_symbols(symbols), doc_area, surface);
         }
 
         markdown_doc.render(doc_area, surface, cx);

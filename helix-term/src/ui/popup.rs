@@ -323,8 +323,9 @@ impl<T: Component> Component for Popup<T> {
 
         let mut inner = area;
         if render_borders {
+            let symbols = cx.editor.config().borders;
             inner = area.inner(Margin::all(1));
-            Widget::render(Block::bordered(), area, surface);
+            Widget::render(Block::bordered().border_symbols(symbols), area, surface);
         }
         let border = usize::from(render_borders);
 

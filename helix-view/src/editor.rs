@@ -346,6 +346,10 @@ pub struct Config {
     pub smart_tab: Option<SmartTabConfig>,
     /// Draw border around popups.
     pub popup_border: PopupBorderConfig,
+    /// Draw rounded border corners
+    pub rounded_corners: bool,
+    /// Border characters
+    pub borders: BorderSymbols,
     /// Which indent heuristic to use when a new line is inserted
     #[serde(default)]
     pub indent_heuristic: IndentationHeuristic,
@@ -944,6 +948,30 @@ pub enum PopupBorderConfig {
     Menu,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct BorderSymbols {
+    pub horizontal: char,
+    pub vertical: char,
+    pub top_left: char,
+    pub top_right: char,
+    pub bottom_left: char,
+    pub bottom_right: char,
+}
+
+impl Default for BorderSymbols {
+    fn default() -> Self {
+        Self {
+            horizontal: '─',
+            vertical: '│',
+            top_left: '┌',
+            top_right: '┐',
+            bottom_left: '└',
+            bottom_right: '┘',
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -996,6 +1024,8 @@ impl Default for Config {
             insert_final_newline: true,
             smart_tab: Some(SmartTabConfig::default()),
             popup_border: PopupBorderConfig::None,
+            borders: BorderSymbols::default(),
+            rounded_corners: false,
             indent_heuristic: IndentationHeuristic::default(),
             jump_label_alphabet: ('a'..='z').collect(),
             inline_diagnostics: InlineDiagnosticsConfig::default(),

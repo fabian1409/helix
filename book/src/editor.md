@@ -322,6 +322,22 @@ character = "╎" # Some characters that work well: "▏", "┆", "┊", "⸽"
 skip-levels = 1
 ```
 
+### `[editor.borders]` Section
+
+Options to override the box glyphs used to render borders.
+
+Example
+
+```toml
+[editor.borders]
+horizontal = "─"
+vertical = "│"
+top_left = "┌"
+top_right = "┐"
+bottom_left = "└"
+bottom_right = "┘"
+```
+
 ### `[editor.gutters]` Section
 
 For simplicity, `editor.gutters` accepts an array of gutter types, which will
