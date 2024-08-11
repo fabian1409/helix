@@ -23,13 +23,13 @@ use helix_view::{
     editor::Action,
     handlers::lsp::SignatureHelpInvoked,
     theme::Style,
-    Document, View,
+    Document, Theme, View,
 };
 
 use crate::{
     compositor::{self, Compositor},
     job::Callback,
-    ui::{self, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
+    ui::{self, menu, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
 };
 
 use std::{cmp::Ordering, collections::HashSet, fmt::Display, future::Future, path::Path};
@@ -159,37 +159,39 @@ fn jump_to_position(
     }
 }
 
-fn display_symbol_kind(kind: lsp::SymbolKind) -> &'static str {
+fn display_symbol_kind(kind: lsp::SymbolKind, theme: &Theme) -> menu::Cell {
     match kind {
-        lsp::SymbolKind::FILE => "file",
-        lsp::SymbolKind::MODULE => "module",
-        lsp::SymbolKind::NAMESPACE => "namespace",
-        lsp::SymbolKind::PACKAGE => "package",
-        lsp::SymbolKind::CLASS => "class",
-        lsp::SymbolKind::METHOD => "method",
-        lsp::SymbolKind::PROPERTY => "property",
-        lsp::SymbolKind::FIELD => "field",
-        lsp::SymbolKind::CONSTRUCTOR => "construct",
-        lsp::SymbolKind::ENUM => "enum",
-        lsp::SymbolKind::INTERFACE => "interface",
-        lsp::SymbolKind::FUNCTION => "function",
-        lsp::SymbolKind::VARIABLE => "variable",
-        lsp::SymbolKind::CONSTANT => "constant",
-        lsp::SymbolKind::STRING => "string",
-        lsp::SymbolKind::NUMBER => "number",
-        lsp::SymbolKind::BOOLEAN => "boolean",
-        lsp::SymbolKind::ARRAY => "array",
-        lsp::SymbolKind::OBJECT => "object",
-        lsp::SymbolKind::KEY => "key",
-        lsp::SymbolKind::NULL => "null",
-        lsp::SymbolKind::ENUM_MEMBER => "enummem",
-        lsp::SymbolKind::STRUCT => "struct",
-        lsp::SymbolKind::EVENT => "event",
-        lsp::SymbolKind::OPERATOR => "operator",
-        lsp::SymbolKind::TYPE_PARAMETER => "typeparam",
+        lsp::SymbolKind::FILE => menu::Cell::from("file"),
+        lsp::SymbolKind::MODULE => menu::Cell::from("module").style(theme.get("namespace")),
+        lsp::SymbolKind::NAMESPACE => menu::Cell::from("namespace").style(theme.get("namespace")),
+        lsp::SymbolKind::PACKAGE => menu::Cell::from("package").style(theme.get("namespace")),
+        lsp::SymbolKind::CLASS => menu::Cell::from("class").style(theme.get("type")),
+        lsp::SymbolKind::METHOD => menu::Cell::from("method").style(theme.get("function")),
+        lsp::SymbolKind::PROPERTY => menu::Cell::from("property"),
+        lsp::SymbolKind::FIELD => menu::Cell::from("field").style(theme.get("keyword")),
+        lsp::SymbolKind::CONSTRUCTOR => {
+            menu::Cell::from("construct").style(theme.get("constructor"))
+        }
+        lsp::SymbolKind::ENUM => menu::Cell::from("enum").style(theme.get("type")),
+        lsp::SymbolKind::INTERFACE => menu::Cell::from("interface").style(theme.get("type")),
+        lsp::SymbolKind::FUNCTION => menu::Cell::from("function").style(theme.get("function")),
+        lsp::SymbolKind::VARIABLE => menu::Cell::from("variable").style(theme.get("variable")),
+        lsp::SymbolKind::CONSTANT => menu::Cell::from("constant").style(theme.get("constant")),
+        lsp::SymbolKind::STRING => menu::Cell::from("string").style(theme.get("string")),
+        lsp::SymbolKind::NUMBER => menu::Cell::from("number"),
+        lsp::SymbolKind::BOOLEAN => menu::Cell::from("boolean"),
+        lsp::SymbolKind::ARRAY => menu::Cell::from("array"),
+        lsp::SymbolKind::OBJECT => menu::Cell::from("object"),
+        lsp::SymbolKind::KEY => menu::Cell::from("key"),
+        lsp::SymbolKind::NULL => menu::Cell::from("null"),
+        lsp::SymbolKind::ENUM_MEMBER => menu::Cell::from("enummem").style(theme.get("type")),
+        lsp::SymbolKind::STRUCT => menu::Cell::from("struct").style(theme.get("type")),
+        lsp::SymbolKind::EVENT => menu::Cell::from("event"),
+        lsp::SymbolKind::OPERATOR => menu::Cell::from("operator").style(theme.get("operator")),
+        lsp::SymbolKind::TYPE_PARAMETER => menu::Cell::from("typeparam").style(theme.get("type")),
         _ => {
             log::warn!("Unknown symbol kind: {:?}", kind);
-            ""
+            menu::Cell::from("")
         }
     }
 }
@@ -404,11 +406,12 @@ pub fn symbol_picker(cx: &mut Context) {
                 Err(err) => log::error!("Error requesting document symbols: {err}"),
             }
         }
-        let call = move |_editor: &mut Editor, compositor: &mut Compositor| {
+        let call = move |editor: &mut Editor, compositor: &mut Compositor| {
             let columns = [
-                ui::PickerColumn::new("kind", |item: &SymbolInformationItem, _| {
-                    display_symbol_kind(item.symbol.kind).into()
-                }),
+                ui::PickerColumn::new("kind", |item: &SymbolInformationItem, theme: &Theme| {
+                    display_symbol_kind(item.symbol.kind, theme)
+                })
+                .without_filtering(),
                 // Some symbols in the document symbol picker may have a URI that isn't
                 // the current file. It should be rare though, so we concatenate that
                 // URI in with the symbol name in this picker.
@@ -428,7 +431,7 @@ pub fn symbol_picker(cx: &mut Context) {
                 columns,
                 1, // name column
                 symbols,
-                (),
+                editor.theme.clone(),
                 move |cx, item, action| {
                     jump_to_location(cx.editor, &item.location, action);
                 },
@@ -524,9 +527,10 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
         .boxed()
     };
     let columns = [
-        ui::PickerColumn::new("kind", |item: &SymbolInformationItem, _| {
-            display_symbol_kind(item.symbol.kind).into()
-        }),
+        ui::PickerColumn::new("kind", |item: &SymbolInformationItem, theme: &Theme| {
+            display_symbol_kind(item.symbol.kind, theme)
+        })
+        .without_filtering(),
         ui::PickerColumn::new("name", |item: &SymbolInformationItem, _| {
             item.symbol.name.as_str().into()
         })
@@ -554,7 +558,7 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
         columns,
         1, // name column
         [],
-        (),
+        cx.editor.theme.clone(),
         move |cx, item, action| {
             jump_to_location(cx.editor, &item.location, action);
         },
