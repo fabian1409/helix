@@ -7,7 +7,7 @@ use helix_view::{
     editor::CompleteAction,
     handlers::lsp::SignatureHelpInvoked,
     theme::{Modifier, Style},
-    ViewId,
+    Theme, ViewId,
 };
 use tui::{buffer::Buffer as Surface, text::Span};
 
@@ -21,7 +21,7 @@ use crate::ui::{menu, Markdown, Menu, Popup, PromptEvent};
 use helix_lsp::{lsp, util, LanguageServerId, OffsetEncoding};
 
 impl menu::Item for CompletionItem {
-    type Data = ();
+    type Data = Theme;
     fn sort_text(&self, data: &Self::Data) -> Cow<str> {
         self.filter_text(data)
     }
@@ -36,7 +36,7 @@ impl menu::Item for CompletionItem {
             .into()
     }
 
-    fn format(&self, _data: &Self::Data) -> menu::Row {
+    fn format(&self, theme: &Self::Data) -> menu::Row {
         let deprecated = self.item.deprecated.unwrap_or_default()
             || self.item.tags.as_ref().map_or(false, |tags| {
                 tags.contains(&lsp::CompletionItemTag::DEPRECATED)
@@ -51,38 +51,70 @@ impl menu::Item for CompletionItem {
                     Style::default()
                 },
             )),
-            menu::Cell::from(match self.item.kind {
-                Some(lsp::CompletionItemKind::TEXT) => "text",
-                Some(lsp::CompletionItemKind::METHOD) => "method",
-                Some(lsp::CompletionItemKind::FUNCTION) => "function",
-                Some(lsp::CompletionItemKind::CONSTRUCTOR) => "constructor",
-                Some(lsp::CompletionItemKind::FIELD) => "field",
-                Some(lsp::CompletionItemKind::VARIABLE) => "variable",
-                Some(lsp::CompletionItemKind::CLASS) => "class",
-                Some(lsp::CompletionItemKind::INTERFACE) => "interface",
-                Some(lsp::CompletionItemKind::MODULE) => "module",
-                Some(lsp::CompletionItemKind::PROPERTY) => "property",
-                Some(lsp::CompletionItemKind::UNIT) => "unit",
-                Some(lsp::CompletionItemKind::VALUE) => "value",
-                Some(lsp::CompletionItemKind::ENUM) => "enum",
-                Some(lsp::CompletionItemKind::KEYWORD) => "keyword",
-                Some(lsp::CompletionItemKind::SNIPPET) => "snippet",
-                Some(lsp::CompletionItemKind::COLOR) => "color",
-                Some(lsp::CompletionItemKind::FILE) => "file",
-                Some(lsp::CompletionItemKind::REFERENCE) => "reference",
-                Some(lsp::CompletionItemKind::FOLDER) => "folder",
-                Some(lsp::CompletionItemKind::ENUM_MEMBER) => "enum_member",
-                Some(lsp::CompletionItemKind::CONSTANT) => "constant",
-                Some(lsp::CompletionItemKind::STRUCT) => "struct",
-                Some(lsp::CompletionItemKind::EVENT) => "event",
-                Some(lsp::CompletionItemKind::OPERATOR) => "operator",
-                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => "type_param",
+            match self.item.kind {
+                Some(lsp::CompletionItemKind::TEXT) => {
+                    menu::Cell::from("text").style(theme.get("string"))
+                }
+                Some(lsp::CompletionItemKind::METHOD) => {
+                    menu::Cell::from("method").style(theme.get("function"))
+                }
+                Some(lsp::CompletionItemKind::FUNCTION) => {
+                    if self.item.label.contains('!') {
+                        menu::Cell::from("macro").style(theme.get("function.macro"))
+                    } else {
+                        menu::Cell::from("function").style(theme.get("function"))
+                    }
+                }
+                Some(lsp::CompletionItemKind::CONSTRUCTOR) => {
+                    menu::Cell::from("constructor").style(theme.get("constructor"))
+                }
+                Some(lsp::CompletionItemKind::FIELD) => {
+                    menu::Cell::from("field").style(theme.get("keyword"))
+                }
+                Some(lsp::CompletionItemKind::VARIABLE) => menu::Cell::from("variable"),
+                Some(lsp::CompletionItemKind::CLASS) => menu::Cell::from("class"),
+                Some(lsp::CompletionItemKind::INTERFACE) => {
+                    menu::Cell::from("interface").style(theme.get("type"))
+                }
+                Some(lsp::CompletionItemKind::MODULE) => {
+                    menu::Cell::from("module").style(theme.get("namespace"))
+                }
+                Some(lsp::CompletionItemKind::PROPERTY) => menu::Cell::from("property"),
+                Some(lsp::CompletionItemKind::UNIT) => menu::Cell::from("unit"),
+                Some(lsp::CompletionItemKind::VALUE) => menu::Cell::from("value"),
+                Some(lsp::CompletionItemKind::ENUM) => {
+                    menu::Cell::from("enum").style(theme.get("type"))
+                }
+                Some(lsp::CompletionItemKind::KEYWORD) => {
+                    menu::Cell::from("keyword").style(theme.get("keyword"))
+                }
+                Some(lsp::CompletionItemKind::SNIPPET) => {
+                    menu::Cell::from("snippet").style(theme.get("keyword"))
+                }
+                Some(lsp::CompletionItemKind::COLOR) => menu::Cell::from("color"),
+                Some(lsp::CompletionItemKind::FILE) => menu::Cell::from("file"),
+                Some(lsp::CompletionItemKind::REFERENCE) => menu::Cell::from("reference"),
+                Some(lsp::CompletionItemKind::FOLDER) => menu::Cell::from("folder"),
+                Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
+                    menu::Cell::from("enum_member").style(theme.get("type"))
+                }
+                Some(lsp::CompletionItemKind::CONSTANT) => {
+                    menu::Cell::from("constant").style(theme.get("constant"))
+                }
+                Some(lsp::CompletionItemKind::STRUCT) => {
+                    menu::Cell::from("struct").style(theme.get("type"))
+                }
+                Some(lsp::CompletionItemKind::EVENT) => menu::Cell::from("event"),
+                Some(lsp::CompletionItemKind::OPERATOR) => menu::Cell::from("operator"),
+                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => {
+                    menu::Cell::from("type_param").style(theme.get("type"))
+                }
                 Some(kind) => {
                     log::error!("Received unknown completion item kind: {:?}", kind);
-                    ""
+                    menu::Cell::from("")
                 }
-                None => "",
-            }),
+                None => menu::Cell::from(""),
+            },
         ])
     }
 }
@@ -118,105 +150,111 @@ impl Completion {
         items.sort_by_key(|item| !item.item.preselect.unwrap_or(false));
 
         // Then create the menu
-        let menu = Menu::new(items, (), move |editor: &mut Editor, item, event| {
-            fn item_to_transaction(
-                doc: &Document,
-                view_id: ViewId,
-                item: &lsp::CompletionItem,
-                offset_encoding: OffsetEncoding,
-                trigger_offset: usize,
-                include_placeholder: bool,
-                replace_mode: bool,
-            ) -> Transaction {
-                use helix_lsp::snippet;
-                let selection = doc.selection(view_id);
-                let text = doc.text().slice(..);
-                let primary_cursor = selection.primary().cursor(text);
+        let menu = Menu::new(
+            items,
+            editor.theme.clone(),
+            move |editor: &mut Editor, item, event| {
+                fn item_to_transaction(
+                    doc: &Document,
+                    view_id: ViewId,
+                    item: &lsp::CompletionItem,
+                    offset_encoding: OffsetEncoding,
+                    trigger_offset: usize,
+                    include_placeholder: bool,
+                    replace_mode: bool,
+                ) -> Transaction {
+                    use helix_lsp::snippet;
+                    let selection = doc.selection(view_id);
+                    let text = doc.text().slice(..);
+                    let primary_cursor = selection.primary().cursor(text);
 
-                let (edit_offset, new_text) = if let Some(edit) = &item.text_edit {
-                    let edit = match edit {
-                        lsp::CompletionTextEdit::Edit(edit) => edit.clone(),
-                        lsp::CompletionTextEdit::InsertAndReplace(item) => {
-                            let range = if replace_mode {
-                                item.replace
-                            } else {
-                                item.insert
-                            };
-                            lsp::TextEdit::new(range, item.new_text.clone())
+                    let (edit_offset, new_text) = if let Some(edit) = &item.text_edit {
+                        let edit = match edit {
+                            lsp::CompletionTextEdit::Edit(edit) => edit.clone(),
+                            lsp::CompletionTextEdit::InsertAndReplace(item) => {
+                                let range = if replace_mode {
+                                    item.replace
+                                } else {
+                                    item.insert
+                                };
+                                lsp::TextEdit::new(range, item.new_text.clone())
+                            }
+                        };
+
+                        let Some(range) =
+                            util::lsp_range_to_range(doc.text(), edit.range, offset_encoding)
+                        else {
+                            return Transaction::new(doc.text());
+                        };
+
+                        let start_offset = range.anchor as i128 - primary_cursor as i128;
+                        let end_offset = range.head as i128 - primary_cursor as i128;
+
+                        (Some((start_offset, end_offset)), edit.new_text)
+                    } else {
+                        let new_text = item
+                            .insert_text
+                            .clone()
+                            .unwrap_or_else(|| item.label.clone());
+                        // check that we are still at the correct savepoint
+                        // we can still generate a transaction regardless but if the
+                        // document changed (and not just the selection) then we will
+                        // likely delete the wrong text (same if we applied an edit sent by the LS)
+                        debug_assert!(primary_cursor == trigger_offset);
+                        (None, new_text)
+                    };
+
+                    if matches!(item.kind, Some(lsp::CompletionItemKind::SNIPPET))
+                        || matches!(
+                            item.insert_text_format,
+                            Some(lsp::InsertTextFormat::SNIPPET)
+                        )
+                    {
+                        match snippet::parse(&new_text) {
+                            Ok(snippet) => util::generate_transaction_from_snippet(
+                                doc.text(),
+                                selection,
+                                edit_offset,
+                                replace_mode,
+                                snippet,
+                                doc.line_ending.as_str(),
+                                include_placeholder,
+                                doc.tab_width(),
+                                doc.indent_width(),
+                            ),
+                            Err(err) => {
+                                log::error!(
+                                    "Failed to parse snippet: {:?}, remaining output: {}",
+                                    &new_text,
+                                    err
+                                );
+                                Transaction::new(doc.text())
+                            }
                         }
-                    };
-
-                    let Some(range) =
-                        util::lsp_range_to_range(doc.text(), edit.range, offset_encoding)
-                    else {
-                        return Transaction::new(doc.text());
-                    };
-
-                    let start_offset = range.anchor as i128 - primary_cursor as i128;
-                    let end_offset = range.head as i128 - primary_cursor as i128;
-
-                    (Some((start_offset, end_offset)), edit.new_text)
-                } else {
-                    let new_text = item
-                        .insert_text
-                        .clone()
-                        .unwrap_or_else(|| item.label.clone());
-                    // check that we are still at the correct savepoint
-                    // we can still generate a transaction regardless but if the
-                    // document changed (and not just the selection) then we will
-                    // likely delete the wrong text (same if we applied an edit sent by the LS)
-                    debug_assert!(primary_cursor == trigger_offset);
-                    (None, new_text)
-                };
-
-                if matches!(item.kind, Some(lsp::CompletionItemKind::SNIPPET))
-                    || matches!(
-                        item.insert_text_format,
-                        Some(lsp::InsertTextFormat::SNIPPET)
-                    )
-                {
-                    match snippet::parse(&new_text) {
-                        Ok(snippet) => util::generate_transaction_from_snippet(
+                    } else {
+                        util::generate_transaction_from_completion_edit(
                             doc.text(),
                             selection,
                             edit_offset,
                             replace_mode,
-                            snippet,
-                            doc.line_ending.as_str(),
-                            include_placeholder,
-                            doc.tab_width(),
-                            doc.indent_width(),
-                        ),
-                        Err(err) => {
-                            log::error!(
-                                "Failed to parse snippet: {:?}, remaining output: {}",
-                                &new_text,
-                                err
-                            );
-                            Transaction::new(doc.text())
-                        }
+                            new_text,
+                        )
                     }
-                } else {
-                    util::generate_transaction_from_completion_edit(
-                        doc.text(),
-                        selection,
-                        edit_offset,
-                        replace_mode,
-                        new_text,
-                    )
                 }
-            }
 
-            fn completion_changes(transaction: &Transaction, trigger_offset: usize) -> Vec<Change> {
-                transaction
-                    .changes_iter()
-                    .filter(|(start, end, _)| (*start..=*end).contains(&trigger_offset))
-                    .collect()
-            }
+                fn completion_changes(
+                    transaction: &Transaction,
+                    trigger_offset: usize,
+                ) -> Vec<Change> {
+                    transaction
+                        .changes_iter()
+                        .filter(|(start, end, _)| (*start..=*end).contains(&trigger_offset))
+                        .collect()
+                }
 
-            let (view, doc) = current!(editor);
+                let (view, doc) = current!(editor);
 
-            macro_rules! language_server {
+                macro_rules! language_server {
                 ($item:expr) => {
                     match editor
                         .language_servers
@@ -233,105 +271,106 @@ impl Completion {
                 };
             }
 
-            match event {
-                PromptEvent::Abort => {}
-                PromptEvent::Update if preview_completion_insert => {
-                    // Update creates "ghost" transactions which are not sent to the
-                    // lsp server to avoid messing up re-requesting completions. Once a
-                    // completion has been selected (with tab, c-n or c-p) it's always accepted whenever anything
-                    // is typed. The only way to avoid that is to explicitly abort the completion
-                    // with c-c. This will remove the "ghost" transaction.
-                    //
-                    // The ghost transaction is modeled with a transaction that is not sent to the LS.
-                    // (apply_temporary) and a savepoint. It's extremely important this savepoint is restored
-                    // (also without sending the transaction to the LS) *before any further transaction is applied*.
-                    // Otherwise incremental sync breaks (since the state of the LS doesn't match the state the transaction
-                    // is applied to).
-                    if matches!(editor.last_completion, Some(CompleteAction::Triggered)) {
-                        editor.last_completion = Some(CompleteAction::Selected {
-                            savepoint: doc.savepoint(view),
-                        })
-                    }
-                    // if more text was entered, remove it
-                    doc.restore(view, &savepoint, false);
-                    // always present here
-                    let item = item.unwrap();
-
-                    let transaction = item_to_transaction(
-                        doc,
-                        view.id,
-                        &item.item,
-                        language_server!(item).offset_encoding(),
-                        trigger_offset,
-                        true,
-                        replace_mode,
-                    );
-                    doc.apply_temporary(&transaction, view.id);
-                }
-                PromptEvent::Update => {}
-                PromptEvent::Validate => {
-                    if let Some(CompleteAction::Selected { savepoint }) =
-                        editor.last_completion.take()
-                    {
+                match event {
+                    PromptEvent::Abort => {}
+                    PromptEvent::Update if preview_completion_insert => {
+                        // Update creates "ghost" transactions which are not sent to the
+                        // lsp server to avoid messing up re-requesting completions. Once a
+                        // completion has been selected (with tab, c-n or c-p) it's always accepted whenever anything
+                        // is typed. The only way to avoid that is to explicitly abort the completion
+                        // with c-c. This will remove the "ghost" transaction.
+                        //
+                        // The ghost transaction is modeled with a transaction that is not sent to the LS.
+                        // (apply_temporary) and a savepoint. It's extremely important this savepoint is restored
+                        // (also without sending the transaction to the LS) *before any further transaction is applied*.
+                        // Otherwise incremental sync breaks (since the state of the LS doesn't match the state the transaction
+                        // is applied to).
+                        if matches!(editor.last_completion, Some(CompleteAction::Triggered)) {
+                            editor.last_completion = Some(CompleteAction::Selected {
+                                savepoint: doc.savepoint(view),
+                            })
+                        }
+                        // if more text was entered, remove it
                         doc.restore(view, &savepoint, false);
+                        // always present here
+                        let item = item.unwrap();
+
+                        let transaction = item_to_transaction(
+                            doc,
+                            view.id,
+                            &item.item,
+                            language_server!(item).offset_encoding(),
+                            trigger_offset,
+                            true,
+                            replace_mode,
+                        );
+                        doc.apply_temporary(&transaction, view.id);
                     }
-                    // always present here
-                    let mut item = item.unwrap().clone();
-
-                    let language_server = language_server!(item);
-                    let offset_encoding = language_server.offset_encoding();
-
-                    if !item.resolved {
-                        if let Some(resolved) =
-                            Self::resolve_completion_item(language_server, item.item.clone())
+                    PromptEvent::Update => {}
+                    PromptEvent::Validate => {
+                        if let Some(CompleteAction::Selected { savepoint }) =
+                            editor.last_completion.take()
                         {
-                            item.item = resolved;
+                            doc.restore(view, &savepoint, false);
                         }
-                    };
-                    // if more text was entered, remove it
-                    doc.restore(view, &savepoint, true);
-                    // save an undo checkpoint before the completion
-                    doc.append_changes_to_history(view);
-                    let transaction = item_to_transaction(
-                        doc,
-                        view.id,
-                        &item.item,
-                        offset_encoding,
-                        trigger_offset,
-                        false,
-                        replace_mode,
-                    );
-                    doc.apply(&transaction, view.id);
+                        // always present here
+                        let mut item = item.unwrap().clone();
 
-                    editor.last_completion = Some(CompleteAction::Applied {
-                        trigger_offset,
-                        changes: completion_changes(&transaction, trigger_offset),
-                    });
+                        let language_server = language_server!(item);
+                        let offset_encoding = language_server.offset_encoding();
 
-                    // TODO: add additional _edits to completion_changes?
-                    if let Some(additional_edits) = item.item.additional_text_edits {
-                        if !additional_edits.is_empty() {
-                            let transaction = util::generate_transaction_from_edits(
-                                doc.text(),
-                                additional_edits,
-                                offset_encoding, // TODO: should probably transcode in Client
-                            );
-                            doc.apply(&transaction, view.id);
+                        if !item.resolved {
+                            if let Some(resolved) =
+                                Self::resolve_completion_item(language_server, item.item.clone())
+                            {
+                                item.item = resolved;
+                            }
+                        };
+                        // if more text was entered, remove it
+                        doc.restore(view, &savepoint, true);
+                        // save an undo checkpoint before the completion
+                        doc.append_changes_to_history(view);
+                        let transaction = item_to_transaction(
+                            doc,
+                            view.id,
+                            &item.item,
+                            offset_encoding,
+                            trigger_offset,
+                            false,
+                            replace_mode,
+                        );
+                        doc.apply(&transaction, view.id);
+
+                        editor.last_completion = Some(CompleteAction::Applied {
+                            trigger_offset,
+                            changes: completion_changes(&transaction, trigger_offset),
+                        });
+
+                        // TODO: add additional _edits to completion_changes?
+                        if let Some(additional_edits) = item.item.additional_text_edits {
+                            if !additional_edits.is_empty() {
+                                let transaction = util::generate_transaction_from_edits(
+                                    doc.text(),
+                                    additional_edits,
+                                    offset_encoding, // TODO: should probably transcode in Client
+                                );
+                                doc.apply(&transaction, view.id);
+                            }
                         }
+                        // we could have just inserted a trigger char (like a `crate::` completion for rust
+                        // so we want to retrigger immediately when accepting a completion.
+                        trigger_auto_completion(&editor.handlers.completions, editor, true);
                     }
-                    // we could have just inserted a trigger char (like a `crate::` completion for rust
-                    // so we want to retrigger immediately when accepting a completion.
-                    trigger_auto_completion(&editor.handlers.completions, editor, true);
-                }
-            };
+                };
 
-            // In case the popup was deleted because of an intersection w/ the auto-complete menu.
-            if event != PromptEvent::Update {
-                editor
-                    .handlers
-                    .trigger_signature_help(SignatureHelpInvoked::Automatic, editor);
-            }
-        });
+                // In case the popup was deleted because of an intersection w/ the auto-complete menu.
+                if event != PromptEvent::Update {
+                    editor
+                        .handlers
+                        .trigger_signature_help(SignatureHelpInvoked::Automatic, editor);
+                }
+            },
+        );
 
         let popup = Popup::new(Self::ID, menu)
             .with_scrollbar(false)
