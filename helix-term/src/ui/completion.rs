@@ -13,7 +13,7 @@ use helix_view::{
     editor::CompleteAction,
     handlers::lsp::SignatureHelpInvoked,
     theme::{Color, Modifier, Style},
-    ViewId,
+    Theme, ViewId,
 };
 use helix_view::{graphics::Rect, Document, Editor};
 use nucleo::{
@@ -29,9 +29,9 @@ use tui::{
 use std::cmp::Reverse;
 
 impl menu::Item for CompletionItem {
-    type Data = Style;
+    type Data = Theme;
 
-    fn format(&self, dir_style: &Self::Data) -> menu::Row {
+    fn format(&self, theme: &Self::Data) -> menu::Row {
         let deprecated = match self {
             CompletionItem::Lsp(LspCompletionItem { item, .. }) => {
                 item.deprecated.unwrap_or_default()
@@ -50,21 +50,45 @@ impl menu::Item for CompletionItem {
 
         let kind = match self {
             CompletionItem::Lsp(LspCompletionItem { item, .. }) => match item.kind {
-                Some(lsp::CompletionItemKind::TEXT) => "text".into(),
-                Some(lsp::CompletionItemKind::METHOD) => "method".into(),
-                Some(lsp::CompletionItemKind::FUNCTION) => "function".into(),
-                Some(lsp::CompletionItemKind::CONSTRUCTOR) => "constructor".into(),
-                Some(lsp::CompletionItemKind::FIELD) => "field".into(),
-                Some(lsp::CompletionItemKind::VARIABLE) => "variable".into(),
-                Some(lsp::CompletionItemKind::CLASS) => "class".into(),
-                Some(lsp::CompletionItemKind::INTERFACE) => "interface".into(),
-                Some(lsp::CompletionItemKind::MODULE) => "module".into(),
+                Some(lsp::CompletionItemKind::TEXT) => {
+                    Span::styled("text", theme.get("text")).into()
+                }
+                Some(lsp::CompletionItemKind::METHOD) => {
+                    Span::styled("method", theme.get("function")).into()
+                }
+                Some(lsp::CompletionItemKind::FUNCTION) => {
+                    Span::styled("function", theme.get("function")).into()
+                }
+                Some(lsp::CompletionItemKind::CONSTRUCTOR) => {
+                    Span::styled("constructor", theme.get("constructor")).into()
+                }
+                Some(lsp::CompletionItemKind::FIELD) => {
+                    Span::styled("field", theme.get("keyword")).into()
+                }
+                Some(lsp::CompletionItemKind::VARIABLE) => {
+                    Span::styled("variable", theme.get("variable")).into()
+                }
+                Some(lsp::CompletionItemKind::CLASS) => {
+                    Span::styled("class", theme.get("type")).into()
+                }
+                Some(lsp::CompletionItemKind::INTERFACE) => {
+                    Span::styled("interface", theme.get("type")).into()
+                }
+                Some(lsp::CompletionItemKind::MODULE) => {
+                    Span::styled("module", theme.get("namespace")).into()
+                }
                 Some(lsp::CompletionItemKind::PROPERTY) => "property".into(),
                 Some(lsp::CompletionItemKind::UNIT) => "unit".into(),
                 Some(lsp::CompletionItemKind::VALUE) => "value".into(),
-                Some(lsp::CompletionItemKind::ENUM) => "enum".into(),
-                Some(lsp::CompletionItemKind::KEYWORD) => "keyword".into(),
-                Some(lsp::CompletionItemKind::SNIPPET) => "snippet".into(),
+                Some(lsp::CompletionItemKind::ENUM) => {
+                    Span::styled("enum", theme.get("type")).into()
+                }
+                Some(lsp::CompletionItemKind::KEYWORD) => {
+                    Span::styled("keyword", theme.get("keyword")).into()
+                }
+                Some(lsp::CompletionItemKind::SNIPPET) => {
+                    Span::styled("snippet", theme.get("keyword")).into()
+                }
                 Some(lsp::CompletionItemKind::COLOR) => item
                     .documentation
                     .as_ref()
@@ -86,15 +110,27 @@ impl menu::Item for CompletionItem {
                             Span::styled("■", Style::default().fg(color)),
                         ])
                     }),
-                Some(lsp::CompletionItemKind::FILE) => "file".into(),
+                Some(lsp::CompletionItemKind::FILE) => {
+                    Span::styled("file", theme.get("text")).into()
+                }
                 Some(lsp::CompletionItemKind::REFERENCE) => "reference".into(),
-                Some(lsp::CompletionItemKind::FOLDER) => "folder".into(),
-                Some(lsp::CompletionItemKind::ENUM_MEMBER) => "enum_member".into(),
-                Some(lsp::CompletionItemKind::CONSTANT) => "constant".into(),
-                Some(lsp::CompletionItemKind::STRUCT) => "struct".into(),
+                Some(lsp::CompletionItemKind::FOLDER) => {
+                    Span::styled("folder", theme.get("function")).into()
+                }
+                Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
+                    Span::styled("enum_member", theme.get("type")).into()
+                }
+                Some(lsp::CompletionItemKind::CONSTANT) => {
+                    Span::styled("constant", theme.get("constant")).into()
+                }
+                Some(lsp::CompletionItemKind::STRUCT) => {
+                    Span::styled("struct", theme.get("type")).into()
+                }
                 Some(lsp::CompletionItemKind::EVENT) => "event".into(),
                 Some(lsp::CompletionItemKind::OPERATOR) => "operator".into(),
-                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => "type_param".into(),
+                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => {
+                    Span::styled("type_param", theme.get("type")).into()
+                }
                 Some(kind) => {
                     log::error!("Received unknown completion item kind: {:?}", kind);
                     "".into()
@@ -109,7 +145,7 @@ impl menu::Item for CompletionItem {
             if deprecated {
                 Style::default().add_modifier(Modifier::CROSSED_OUT)
             } else if kind.0[0].content == "folder" {
-                *dir_style
+                theme.get("ui.text.directory")
             } else {
                 Style::default()
             },
@@ -136,10 +172,10 @@ impl Completion {
         let preview_completion_insert = editor.config().preview_completion_insert;
         let replace_mode = editor.config().completion_replace;
 
-        let dir_style = editor.theme.get("ui.text.directory");
+        let theme = editor.theme.clone();
 
         // Then create the menu
-        let menu = Menu::new(items, dir_style, move |editor: &mut Editor, item, event| {
+        let menu = Menu::new(items, theme, move |editor: &mut Editor, item, event| {
             let (view, doc) = current!(editor);
 
             macro_rules! language_server {
