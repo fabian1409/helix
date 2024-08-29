@@ -4,7 +4,10 @@ use crate::{
     text::Spans,
     widgets::{Borders, Widget},
 };
-use helix_view::graphics::{Rect, Style};
+use helix_view::{
+    editor::CornerType,
+    graphics::{Rect, Style},
+};
 
 /// Border render type. Defaults to [`BorderType::Plain`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +26,16 @@ impl BorderType {
             Self::Rounded => line::ROUNDED,
             Self::Double => line::DOUBLE,
             Self::Thick => line::THICK,
+        }
+    }
+}
+
+impl From<CornerType> for BorderType {
+    fn from(value: CornerType) -> Self {
+        if value == CornerType::Rounded {
+            Self::Rounded
+        } else {
+            Self::default()
         }
     }
 }

@@ -9,7 +9,7 @@ use helix_view::{
     theme::{Modifier, Style},
     ViewId,
 };
-use tui::{buffer::Buffer as Surface, text::Span, widgets::BorderType};
+use tui::{buffer::Buffer as Surface, text::Span};
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -531,11 +531,7 @@ impl Component for Completion {
 
         if cx.editor.popup_border() {
             use tui::widgets::{Block, Widget};
-            let border_type = if cx.editor.config().rounded_corners {
-                BorderType::Rounded
-            } else {
-                BorderType::Plain
-            };
+            let border_type = cx.editor.config().corner_type.into();
             Widget::render(
                 Block::bordered().border_type(border_type),
                 doc_area,

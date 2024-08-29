@@ -655,11 +655,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let background = cx.editor.theme.get("ui.background");
         surface.clear_with(area, background);
 
-        let border_type = if cx.editor.config().rounded_corners {
-            BorderType::Rounded
-        } else {
-            BorderType::Plain
-        };
+        let border_type = cx.editor.config().corner_type.into();
         let block: Block<'_> = Block::bordered().border_type(border_type);
 
         // calculate the inner area inside the box
@@ -845,11 +841,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let text = cx.editor.theme.get("ui.text");
         surface.clear_with(area, background);
 
-        let border_type = if cx.editor.config().rounded_corners {
-            BorderType::Rounded
-        } else {
-            BorderType::Plain
-        };
+        let border_type = cx.editor.config().corner_type.into();
         let block: Block<'_> = Block::bordered().border_type(border_type);
 
         // calculate the inner area inside the box
