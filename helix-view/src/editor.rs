@@ -333,7 +333,7 @@ pub struct Config {
     pub smart_tab: Option<SmartTabConfig>,
     /// Draw border around popups.
     pub popup_border: PopupBorderConfig,
-    /// Corner type for all borders
+    /// Corner type for borders
     pub corner_type: CornerType,
     /// Which indent heuristic to use when a new line is inserted
     #[serde(default)]
@@ -932,7 +932,7 @@ pub enum PopupBorderConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum CornerType {
     #[default]
-    Plain,
+    Normal,
     Rounded,
 }
 
