@@ -311,7 +311,8 @@ impl<'a> Table<'a> {
         }
 
         let selected = selected.unwrap_or(0).min(self.rows.len() - 1);
-        while selected >= end {
+        let padding = if selected < self.rows.len() - 1 { 1 } else { 0 };
+        while selected >= end - padding {
             height = height.saturating_add(self.rows[end].total_height());
             end += 1;
             while height > max_height {
