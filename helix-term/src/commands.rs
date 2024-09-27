@@ -7,7 +7,7 @@ pub use dap::*;
 use futures_util::FutureExt;
 use helix_event::status;
 use helix_stdx::{
-    path::{self, find_paths},
+    path::{self, copy_recursively, find_paths, fold_home_dir, home_dir},
     rope::{self, RopeSliceExt},
 };
 use helix_vcs::{FileChange, Hunk};
@@ -48,6 +48,7 @@ use helix_view::{
     document::{FormatterError, Mode, SCRATCH_BUFFER_NAME},
     editor::Action,
     expansion,
+    file_tree::FileTreeItem,
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
@@ -66,7 +67,7 @@ use crate::{
     compositor::{self, Component, Compositor},
     filter_picker_entry,
     job::Callback,
-    ui::{self, overlay::overlaid, Picker, PickerColumn, Popup, Prompt, PromptEvent},
+    ui::{self, completers, overlay::overlaid, Picker, PickerColumn, Popup, Prompt, PromptEvent},
 };
 
 use crate::job::{self, Jobs};
@@ -79,6 +80,7 @@ use std::{
     future::Future,
     io::Read,
     num::NonZeroUsize,
+    str::FromStr,
 };
 
 use std::{
@@ -616,6 +618,26 @@ impl MappableCommand {
         goto_prev_tabstop, "Goto next snippet placeholder",
         rotate_selections_first, "Make the first selection your primary one",
         rotate_selections_last, "Make the last selection your primary one",
+        file_tree, "Open file tree",
+        file_tree_close, "Close file tree",
+        file_tree_select, "Expand/collapse/open file tree item",
+        file_tree_open_vsplit, "Open the selected file or directory (vsplit)",
+        file_tree_open_hsplit, "Open the selected file or directory (hsplit)",
+        file_tree_move_up, "Move up",
+        file_tree_move_down, "Move down",
+        file_tree_goto_start, "Goto start",
+        file_tree_goto_end, "Goto end",
+        file_tree_delete, "Delete file or directory",
+        file_tree_rename, "Rename file or directory",
+        file_tree_new_file, "Create new file",
+        file_tree_new_dir, "Create new directory",
+        file_tree_yank, "Yank selected item",
+        file_tree_paste, "Paste yanked item",
+        file_tree_move, "Move selected item",
+        file_tree_search, "Search for item",
+        file_tree_reload, "Reload file tree",
+        file_tree_find_next_char, "Move to next item starting with char",
+        file_tree_find_prev_char, "Move to prev item starting with char",
     );
 }
 
@@ -4811,6 +4833,7 @@ pub(crate) fn paste_bracketed_value(cx: &mut Context, contents: String) {
     let paste = match cx.editor.mode {
         Mode::Insert | Mode::Select => Paste::Cursor,
         Mode::Normal => Paste::Before,
+        Mode::FileTree => unreachable!(),
     };
     let (view, doc) = current!(cx.editor);
     paste_impl(&[contents], doc, view, paste, count, cx.editor.mode);
@@ -6999,4 +7022,290 @@ fn lsp_or_syntax_workspace_symbol_picker(cx: &mut Context) {
     } else {
         syntax_workspace_symbol_picker(cx);
     }
+}
+
+fn file_tree(cx: &mut Context) {
+    cx.editor.mode = Mode::FileTree;
+    cx.editor.file_tree.open = true;
+}
+
+fn file_tree_close(cx: &mut Context) {
+    cx.editor.mode = Mode::Normal;
+    cx.editor.file_tree.open = false;
+}
+
+fn file_tree_select(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected_mut().unwrap();
+    let path = item.path.clone();
+    if item.is_dir {
+        if item.is_expanded {
+            item.collapse();
+        } else {
+            item.expand();
+        }
+    } else {
+        cx.editor.open(&path, Action::Replace).unwrap();
+    }
+}
+
+fn file_tree_open_vsplit(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    cx.editor.open(&item.path, Action::VerticalSplit).unwrap();
+}
+
+fn file_tree_open_hsplit(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    cx.editor.open(&item.path, Action::HorizontalSplit).unwrap();
+}
+
+fn file_tree_move_up(cx: &mut Context) {
+    for _ in 0..cx.count() {
+        cx.editor.file_tree.move_up()
+    }
+}
+
+fn file_tree_move_down(cx: &mut Context) {
+    for _ in 0..cx.count() {
+        cx.editor.file_tree.move_down()
+    }
+}
+
+fn file_tree_goto_start(cx: &mut Context) {
+    cx.editor.file_tree.goto_start()
+}
+
+fn file_tree_goto_end(cx: &mut Context) {
+    cx.editor.file_tree.goto_end()
+}
+
+fn file_tree_delete(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    let prompt = Prompt::new(
+        format!("delete '{}'? (y/n):", item.name).into(),
+        None,
+        completers::none,
+        move |cx, input, event| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            if input.eq("y") {
+                let file_tree = &mut cx.editor.file_tree;
+                let parent = file_tree
+                    .find_with_path(item.path.parent().unwrap())
+                    .unwrap();
+                if item.is_dir {
+                    if std::fs::remove_dir_all(&item.path).is_ok() {
+                        parent.children.retain(|c| *c != item);
+                    } else {
+                        cx.editor.set_error("failed to rm dir");
+                    }
+                } else if std::fs::remove_file(&item.path).is_ok() {
+                    parent.children.retain(|c| *c != item);
+                } else {
+                    cx.editor.set_error("failed to rm file");
+                }
+            }
+        },
+    );
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_rename(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    let prompt = Prompt::new(
+        "rename-to:".into(),
+        None,
+        completers::none,
+        move |cx, input, event| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            let to = item.path.with_file_name(input);
+            if std::fs::rename(&item.path, &to).is_ok() {
+                let file_tree = &mut cx.editor.file_tree;
+                let item = file_tree.selected_mut().unwrap();
+                item.collapse();
+                item.name = input.split('/').next().unwrap().to_string();
+                item.path = to;
+                let item = item.clone();
+                file_tree
+                    .find_with_path(item.path.parent().unwrap())
+                    .unwrap()
+                    .children
+                    .sort();
+            } else {
+                cx.editor.set_error("rename failed");
+            }
+        },
+    )
+    .with_line(item.name, cx.editor);
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_new_file(cx: &mut Context) {
+    let prompt = Prompt::new(
+        "new-file:".into(),
+        None,
+        completers::none,
+        move |cx, input, event| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            let file_tree = &mut cx.editor.file_tree;
+            let dest = file_tree.selected_mut().unwrap();
+            if dest.is_dir {
+                let path = dest.path.join(input);
+                if std::fs::File::create(&path).is_ok() {
+                    if dest.is_expanded {
+                        let item = FileTreeItem::new(input.to_string(), path, false);
+                        dest.children.push(item);
+                        dest.children.sort();
+                    }
+                } else {
+                    cx.editor.set_error("failed to create file");
+                }
+            }
+        },
+    );
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_new_dir(cx: &mut Context) {
+    let prompt = Prompt::new(
+        "new-dir:".into(),
+        None,
+        completers::none,
+        move |cx, input, event| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            let file_tree = &mut cx.editor.file_tree;
+            let dest = file_tree.selected_mut().unwrap();
+            if dest.is_dir {
+                let path = dest.path.join(input);
+                // TODO maybe recursive?
+                if std::fs::DirBuilder::new().create(&path).is_ok() {
+                    if dest.is_expanded {
+                        let item = FileTreeItem::new(input.to_string(), path, true);
+                        dest.children.push(item);
+                        dest.children.sort();
+                    }
+                } else {
+                    cx.editor.set_error("failed to create dir");
+                }
+            }
+        },
+    );
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_yank(cx: &mut Context) {
+    let mut item = cx.editor.file_tree.selected().cloned().unwrap();
+    item.collapse();
+    cx.editor.set_status(format!("'{}' copied", item.name));
+    cx.editor.file_tree.copied = Some(item);
+}
+
+fn file_tree_paste(cx: &mut Context) {
+    let file_tree = &mut cx.editor.file_tree;
+    if let Some(mut item) = file_tree.copied.clone() {
+        let dest = file_tree.selected_mut().unwrap();
+        if dest.is_dir {
+            if Path::exists(&dest.path.join(&item.name)) {
+                item.name += ".copy";
+            }
+            let to = dest.path.join(&item.name);
+            if item.is_dir {
+                if copy_recursively(&item.path, &to).is_err() {
+                    cx.editor.set_error("failed to paste dir");
+                    return;
+                }
+            } else if std::fs::copy(&item.path, &to).is_err() {
+                cx.editor.set_error("failed to paste file");
+                return;
+            }
+            if dest.is_expanded {
+                item.path = to.clone();
+                dest.children.push(item);
+                dest.children.sort();
+            }
+        }
+    } else {
+        cx.editor.set_status("nothing to paste".to_string());
+    }
+}
+
+fn file_tree_move(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    let from = fold_home_dir(item.path.clone());
+    let from = from.to_string_lossy();
+    let prompt = Prompt::new(
+        "mv:".into(),
+        None,
+        completers::directory,
+        move |cx, input, event| {
+            if event != PromptEvent::Validate {
+                return;
+            }
+            let home_dir = home_dir().expect("can get home");
+            let input = input.replace("~", &home_dir.to_string_lossy());
+            if std::fs::rename(&item.path, &input).is_ok() {
+                let file_tree = &mut cx.editor.file_tree;
+                let mut item = file_tree.take_selected().unwrap();
+                item.name = input.split('/').last().unwrap().to_string();
+                item.path = PathBuf::from_str(&input).expect("valid if rename was sucessful");
+                if let Some(parent) = file_tree.find_with_path(item.path.parent().unwrap()) {
+                    if parent.is_expanded {
+                        parent.children.push(item);
+                        parent.children.sort();
+                    }
+                }
+            } else {
+                cx.editor.set_error("mv failed");
+            }
+        },
+    )
+    .with_line(from.to_string(), cx.editor);
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_search(cx: &mut Context) {
+    let prompt = Prompt::new(
+        "search:".into(),
+        None,
+        completers::none,
+        move |cx, input, _| {
+            let file_tree = &mut cx.editor.file_tree;
+            let items = file_tree.flatten();
+            let selection = items.iter().position(|item| item.name.starts_with(input));
+            if let Some(selection) = selection {
+                file_tree.selection = selection;
+            }
+        },
+    );
+    cx.push_layer(Box::new(prompt));
+}
+
+fn file_tree_reload(cx: &mut Context) {
+    cx.editor.file_tree.reload()
+}
+
+fn file_tree_find_char(cx: &mut Context, direction: Direction) {
+    cx.on_next_key(move |cx, event| {
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            ..
+        } = event
+        {
+            cx.editor.file_tree.find_char(ch, direction)
+        }
+    })
+}
+
+fn file_tree_find_next_char(cx: &mut Context) {
+    file_tree_find_char(cx, Direction::Forward)
+}
+
+fn file_tree_find_prev_char(cx: &mut Context) {
+    file_tree_find_char(cx, Direction::Backward)
 }

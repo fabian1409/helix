@@ -236,6 +236,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
             "g" => changed_file_picker,
             "a" => code_action,
             "'" => last_picker,
+            "t" => file_tree,
             "G" => { "Debug (experimental)" sticky=true
                 "l" => dap_launch,
                 "r" => dap_restart,
@@ -404,9 +405,39 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
         "home" => goto_line_start,
         "end" => goto_line_end_newline,
     });
+    let file_tree = keymap!({ "File tree"
+        "esc" | "q" => file_tree_close,
+        "ret" => file_tree_select,
+        "k" => file_tree_move_up,
+        "j" => file_tree_move_down,
+        "s" => { "Split"
+            "v" => file_tree_open_vsplit,
+            "h" => file_tree_open_hsplit,
+        },
+        "g" => { "Goto"
+            "g" => file_tree_goto_start,
+            "e" => file_tree_goto_end,
+        },
+        "f" => file_tree_find_next_char,
+        "F" => file_tree_find_prev_char,
+        "d" => file_tree_delete,
+        "r" => file_tree_rename,
+        "n" => { "New"
+            "f" => file_tree_new_file,
+            "d" => file_tree_new_dir,
+        },
+        "y" => file_tree_yank,
+        "p" => file_tree_paste,
+        "m" => file_tree_move,
+        "/" => file_tree_search,
+        "R" => file_tree_reload,
+        "C-l" => jump_view_right,
+        ":" => command_mode,
+    });
     hashmap!(
         Mode::Normal => normal,
         Mode::Select => select,
         Mode::Insert => insert,
+        Mode::FileTree => file_tree,
     )
 }

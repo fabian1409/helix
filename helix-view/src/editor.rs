@@ -5,6 +5,7 @@ use crate::{
         DocumentOpenError, DocumentSavedEventFuture, DocumentSavedEventResult, Mode, SavePoint,
     },
     events::{DocumentDidClose, DocumentDidOpen, DocumentFocusLost},
+    file_tree::FileTree,
     graphics::{CursorKind, Rect},
     handlers::Handlers,
     info::Info,
@@ -1218,6 +1219,8 @@ pub struct Editor {
     pub status_msg: Option<(Cow<'static, str>, Severity)>,
     pub autoinfo: Option<Info>,
 
+    pub file_tree: FileTree,
+
     pub config: Arc<dyn DynAccess<Config>>,
     pub auto_pairs: Option<AutoPairs>,
 
@@ -1355,6 +1358,7 @@ impl Editor {
             ))),
             status_msg: None,
             autoinfo: None,
+            file_tree: FileTree::new(),
             idle_timer: Box::pin(sleep(conf.idle_timeout)),
             redraw_timer: Box::pin(sleep(Duration::MAX)),
             last_motion: None,
@@ -2107,7 +2111,29 @@ impl Editor {
 
     pub fn focus_direction(&mut self, direction: tree::Direction) {
         let current_view = self.tree.focus;
-        if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
+        if self.file_tree.open {
+            if matches!(self.mode, Mode::FileTree) && matches!(direction, tree::Direction::Right) {
+                self.mode = Mode::Normal;
+                let id = self
+                    .tree
+                    .views()
+                    .min_by(|x, y| x.0.area.x.cmp(&y.0.area.x))
+                    .unwrap()
+                    .0
+                    .id;
+                self.focus(id);
+            } else if !matches!(self.mode, Mode::FileTree)
+                && matches!(direction, tree::Direction::Left)
+            {
+                if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
+                    self.focus(id)
+                } else {
+                    self.mode = Mode::FileTree;
+                }
+            } else if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
+                self.focus(id)
+            }
+        } else if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
             self.focus(id)
         }
     }
