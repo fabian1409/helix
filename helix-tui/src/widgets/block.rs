@@ -189,7 +189,12 @@ impl Widget for Block<'_> {
             let lx = u16::from(self.borders.intersects(Borders::LEFT));
             let rx = u16::from(self.borders.intersects(Borders::RIGHT));
             let width = area.width.saturating_sub(lx).saturating_sub(rx);
-            buf.set_spans(area.left() + lx, area.top(), &title, width);
+            buf.set_spans(
+                area.left() + lx + width / 2 - title.width() as u16 / 2,
+                area.top(),
+                &title,
+                width,
+            );
         }
     }
 }

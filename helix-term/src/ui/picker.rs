@@ -645,7 +645,15 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         // calculate the inner area inside the box
         let inner = BLOCK.inner(area);
 
-        BLOCK.render(area, surface);
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title("Find")
+            .render(area.with_height(3), surface);
+
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title("Results")
+            .render(area.clip_top(3), surface);
 
         // -- Render the input bar:
 
@@ -672,17 +680,17 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         );
 
         // -- Separator
-        let sep_style = cx.editor.theme.get("ui.background.separator");
-        let borders = BorderType::line_symbols(BorderType::Plain);
-        for x in inner.left()..inner.right() {
-            if let Some(cell) = surface.get_mut(x, inner.y + 1) {
-                cell.set_symbol(borders.horizontal).set_style(sep_style);
-            }
-        }
+        // let sep_style = cx.editor.theme.get("ui.background.separator");
+        // let borders = BorderType::line_symbols(BorderType::Plain);
+        // for x in inner.left()..inner.right() {
+        //     if let Some(cell) = surface.get_mut(x, inner.y + 1) {
+        //         cell.set_symbol(borders.horizontal).set_style(sep_style);
+        //     }
+        // }
 
         // -- Render the contents:
         // subtract area of prompt from top
-        let inner = inner.clip_top(2);
+        let inner = inner.clip_top(3);
         let rows = inner.height.saturating_sub(self.header_height()) as u32;
         let offset = self.cursor - (self.cursor % std::cmp::max(1, rows));
         let cursor = self.cursor.saturating_sub(offset);
@@ -825,14 +833,16 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let text = cx.editor.theme.get("ui.text");
         surface.clear_with(area, background);
 
-        const BLOCK: Block<'_> = Block::bordered();
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title("Preview");
 
         // calculate the inner area inside the box
-        let inner = BLOCK.inner(area);
+        let inner = block.inner(area);
         // 1 column gap on either side
         let margin = Margin::horizontal(1);
         let inner = inner.inner(margin);
-        BLOCK.render(area, surface);
+        block.render(area, surface);
 
         if let Some((preview, range)) = self.get_preview(cx.editor) {
             let doc = match preview.document() {
