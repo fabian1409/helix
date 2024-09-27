@@ -1,3 +1,4 @@
+use super::{overlay::Overlay, Prompt, PromptEvent};
 use crate::{
     commands::{self, OnKeyCallback, OnKeyCallbackKind},
     compositor::{Component, Context, Event, EventResult},
@@ -12,7 +13,6 @@ use crate::{
         Completion, ProgressSpinners,
     },
 };
-
 use helix_core::{
     diagnostic::NumberOrString,
     graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
@@ -22,18 +22,25 @@ use helix_core::{
     unicode::width::UnicodeWidthStr,
     visual_offset_from_block, Change, Position, Range, Selection, Transaction,
 };
+use helix_stdx::path::fold_home_dir;
 use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
+    file_tree::{FileTree, FILE_TREE_WIDTH},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
     Document, Editor, Theme, View,
 };
-use std::{mem::take, num::NonZeroUsize, path::PathBuf, rc::Rc};
-
-use tui::{buffer::Buffer as Surface, text::Span};
+use std::{mem::take, num::NonZeroUsize, path::PathBuf, rc::Rc, sync::Arc};
+use tui::{
+    buffer::Buffer as Surface,
+    layout::Constraint,
+    symbols::line::{BOTTOM_LEFT, VERTICAL},
+    text::{Span, Spans, Text},
+    widgets::{Block, Borders, Paragraph, Row, Table, TableState, Widget},
+};
 
 pub struct EditorView {
     pub keymaps: Keymaps,
@@ -734,11 +741,7 @@ impl EditorView {
         theme: &Theme,
     ) {
         use helix_core::diagnostic::Severity;
-        use tui::{
-            layout::Alignment,
-            text::Text,
-            widgets::{Paragraph, Widget, Wrap},
-        };
+        use tui::{layout::Alignment, widgets::Wrap};
 
         let cursor = doc
             .selection(view.id)
@@ -873,6 +876,106 @@ impl EditorView {
                 }
             }
         }
+    }
+
+    pub fn render_file_tree(
+        &self,
+        editor: &Editor,
+        file_tree: &FileTree,
+        area: Rect,
+        surface: &mut Surface,
+    ) {
+        // use no selection style if not in focus
+        let selection_style = if file_tree.focused {
+            editor.theme.get("ui.selection")
+        } else {
+            Style::new()
+        };
+        let border_style = editor.theme.get("ui.window");
+        let text_style = editor.theme.get("ui.text");
+        let dir_icon_style = editor.theme.get("keyword");
+        let dir_style = editor.theme.get("function");
+
+        // render cwd in first line
+        let cwd = std::env::current_dir().unwrap();
+        let cwd = fold_home_dir(cwd);
+        let spans = Spans::from(vec![
+            Span::styled(" ", dir_icon_style),
+            Span::styled(cwd.to_string_lossy(), text_style),
+        ]);
+        let text = Text::from(spans);
+        let paragraph = Paragraph::new(&text).block(
+            Block::new()
+                .borders(Borders::RIGHT)
+                .border_style(border_style),
+        );
+        paragraph.render(area.with_width(FILE_TREE_WIDTH).with_height(1), surface);
+
+        // render tree
+        let rows = file_tree
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                // let prefix = format!("{: <1$}", "", item.depth * 2);
+                let mut prefix = String::new();
+                if item.is_dir && item.depth == 0 {
+                    prefix += if item.is_expanded { " " } else { " " };
+                } else {
+                    prefix += "  ";
+                }
+                if item.depth > 0 {
+                    for _ in 0..item.depth - 1 {
+                        prefix += VERTICAL;
+                        prefix += " ";
+                    }
+                    if item.is_dir {
+                        prefix += if item.is_expanded { " " } else { " " };
+                    } else {
+                        let next = file_tree.items.get(i + 1);
+                        if next.is_some_and(|next| next.depth < item.depth) {
+                            prefix += BOTTOM_LEFT;
+                        } else {
+                            prefix += VERTICAL;
+                        }
+                        prefix += " ";
+                    }
+                }
+
+                if item.is_dir {
+                    Row::new(vec![Spans::from(vec![
+                        Span::styled(prefix, border_style),
+                        Span::styled(if item.is_expanded { " " } else { " " }, dir_icon_style),
+                        Span::styled(&item.name, dir_style),
+                    ])])
+                } else {
+                    Row::new(vec![Spans::from(vec![
+                        Span::styled(prefix, border_style),
+                        Span::styled(" ", text_style),
+                        Span::styled(&item.name, text_style),
+                    ])])
+                }
+            })
+            .collect::<Vec<Row>>();
+        let widths = vec![Constraint::Length(FILE_TREE_WIDTH); rows.len()];
+        let table = Table::new(rows)
+            .block(
+                Block::new()
+                    .borders(Borders::RIGHT)
+                    .border_style(border_style),
+            )
+            .style(text_style)
+            .highlight_style(selection_style)
+            .widths(&widths);
+        table.render_table(
+            area.with_width(FILE_TREE_WIDTH).clip_top(1).clip_bottom(1),
+            surface,
+            &mut TableState {
+                offset: 0,
+                selected: file_tree.selection,
+            },
+            false,
+        );
     }
 
     /// Handle events by looking them up in `self.keymaps`. Returns None
@@ -1044,6 +1147,71 @@ impl EditorView {
                 }
             }
         }
+    }
+
+    fn handle_file_tree(&mut self, cx: &mut commands::Context, key: KeyEvent) -> bool {
+        let file_tree = cx.editor.file_tree.as_mut().unwrap();
+        let mut to_open = None;
+        let mut handled = true;
+        if file_tree.focused {
+            match key.code {
+                KeyCode::Char('j') => file_tree.move_down(),
+                KeyCode::Char('k') => file_tree.move_up(),
+                KeyCode::Enter => {
+                    let selection = file_tree.selection;
+                    let item = file_tree.items.get(selection.unwrap()).unwrap();
+                    if item.is_dir {
+                        if item.is_expanded {
+                            file_tree.collapse();
+                        } else {
+                            file_tree.expand();
+                        }
+                    } else {
+                        to_open = Some(item.path.clone());
+                    }
+                }
+                KeyCode::Char('d') => {
+                    // let selection = file_tree.selection;
+                    // let item = file_tree.items.get(selection.unwrap()).cloned().unwrap();
+                    // let prompt = Prompt::new(
+                    //     "Are you sure you want to delete?".into(),
+                    //     None,
+                    //     super::completers::none,
+                    //     move |_, input, event| {
+                    //         if event != PromptEvent::Validate {
+                    //             return;
+                    //         }
+                    //         if input.eq("yes") {
+                    //             file_tree.items.remove(selection.unwrap());
+                    //             if item.is_dir {
+                    //                 let _ = std::fs::remove_dir(&item.path);
+                    //             } else {
+                    //                 let _ = std::fs::remove_file(&item.path);
+                    //             }
+                    //         }
+                    //     },
+                    // );
+                    // cx.push_layer(Box::new(Overlay {
+                    //     content: prompt,
+                    //     calc_child_size: Box::new(|rect| {
+                    //         rect.with_width(38).clip_top(rect.height - 4)
+                    //     }),
+                    // }));
+                }
+                KeyCode::Esc | KeyCode::Char('q') => cx.editor.file_tree = None,
+                _ => handled = false,
+            }
+        } else {
+            handled = false
+        }
+
+        if let Some(path) = to_open {
+            cx.editor
+                .open(&path, helix_view::editor::Action::Replace)
+                .unwrap();
+        }
+
+        handled
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1471,7 +1639,13 @@ impl Component for EditorView {
                                 self.last_insert.1.push(InsertEvent::Key(key));
                             }
                         }
-                        mode => self.command_mode(mode, &mut cx, key),
+                        mode => {
+                            if !(cx.editor.file_tree.is_some()
+                                && self.handle_file_tree(&mut cx, key))
+                            {
+                                self.command_mode(mode, &mut cx, key)
+                            }
+                        }
                     }
                 }
 
@@ -1556,16 +1730,35 @@ impl Component for EditorView {
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
+        if cx.editor.file_tree.is_some() {
+            editor_area = editor_area.clip_left(FILE_TREE_WIDTH);
+        }
 
         // if the terminal size suddenly changed, we need to trigger a resize
         cx.editor.resize(editor_area);
 
         if use_bufferline {
-            Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            // shift bufferline to right if file tree is open
+            if cx.editor.file_tree.is_some() {
+                Self::render_bufferline(
+                    cx.editor,
+                    area.clip_left(FILE_TREE_WIDTH).with_height(1),
+                    surface,
+                );
+            } else {
+                Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            }
         }
 
         for (view, is_focused) in cx.editor.tree.views() {
             let doc = cx.editor.document(view.doc).unwrap();
+            let is_focused = !cx
+                .editor
+                .file_tree
+                .as_ref()
+                .is_some_and(|file_tree| file_tree.focused)
+                && is_focused;
+
             self.render_view(cx.editor, doc, view, area, surface, is_focused);
         }
 
@@ -1637,6 +1830,10 @@ impl Component for EditorView {
 
         if let Some(completion) = self.completion.as_mut() {
             completion.render(area, surface, cx);
+        }
+
+        if let Some(file_tree) = &cx.editor.file_tree {
+            self.render_file_tree(cx.editor, file_tree, area, surface);
         }
     }
 
