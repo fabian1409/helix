@@ -66,6 +66,7 @@ pub enum Mode {
     Normal = 0,
     Select = 1,
     Insert = 2,
+    FileTree = 3,
 }
 
 impl Display for Mode {
@@ -74,6 +75,7 @@ impl Display for Mode {
             Mode::Normal => f.write_str("normal"),
             Mode::Select => f.write_str("select"),
             Mode::Insert => f.write_str("insert"),
+            Mode::FileTree => f.write_str("file_tree"),
         }
     }
 }
@@ -86,6 +88,7 @@ impl FromStr for Mode {
             "normal" => Ok(Mode::Normal),
             "select" => Ok(Mode::Select),
             "insert" => Ok(Mode::Insert),
+            "file_tree" => Ok(Mode::FileTree),
             _ => bail!("Invalid mode '{}'", s),
         }
     }
