@@ -41,6 +41,7 @@ use helix_core::{
 use helix_view::{
     document::{FormatterError, Mode, SCRATCH_BUFFER_NAME},
     editor::Action,
+    file_tree::FileTree,
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
@@ -590,6 +591,7 @@ impl MappableCommand {
         extend_to_word, "Extend to a two-character label",
         goto_next_tabstop, "goto next snippet placeholder",
         goto_prev_tabstop, "goto next snippet placeholder",
+        file_tree, "Open file tree",
     );
 }
 
@@ -6614,4 +6616,12 @@ fn jump_to_word(cx: &mut Context, behaviour: Movement) {
         }
     }
     jump_to_label(cx, words, behaviour)
+}
+
+fn file_tree(cx: &mut Context) {
+    if let Some(file_tree) = cx.editor.file_tree.as_mut() {
+        file_tree.focused = true;
+    } else {
+        cx.editor.file_tree = Some(FileTree::new());
+    }
 }
