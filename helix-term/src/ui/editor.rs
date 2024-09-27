@@ -12,7 +12,6 @@ use crate::{
         Completion, ProgressSpinners,
     },
 };
-
 use helix_core::{
     diagnostic::NumberOrString,
     graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
@@ -26,14 +25,20 @@ use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
+    file_tree::{FileTree, FILE_TREE_WIDTH},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
     Document, Editor, Theme, View,
 };
 use std::{mem::take, num::NonZeroUsize, ops, path::PathBuf, rc::Rc};
-
-use tui::{buffer::Buffer as Surface, text::Span};
+use tui::{
+    buffer::Buffer as Surface,
+    layout::Constraint,
+    symbols::line::{BOTTOM_LEFT, VERTICAL},
+    text::{Span, Spans, Text},
+    widgets::{Block, Borders, Paragraph, Row, Table, TableState, Widget},
+};
 
 pub struct EditorView {
     pub keymaps: Keymaps,
@@ -81,13 +86,14 @@ impl EditorView {
         view: &View,
         viewport: Rect,
         surface: &mut Surface,
-        is_focused: bool,
+        mut is_focused: bool,
     ) {
         let inner = view.inner_area(doc);
         let area = view.area;
         let theme = &editor.theme;
         let config = editor.config();
         let loader = editor.syn_loader.load();
+        is_focused &= editor.mode != Mode::FileTree;
 
         let view_offset = doc.view_offset(view.id);
 
@@ -493,6 +499,7 @@ impl EditorView {
             Mode::Insert => theme.find_highlight_exact("ui.cursor.insert"),
             Mode::Select => theme.find_highlight_exact("ui.cursor.select"),
             Mode::Normal => theme.find_highlight_exact("ui.cursor.normal"),
+            Mode::FileTree => theme.find_highlight_exact("ui.cursor.normal"),
         }
         .unwrap_or(base_cursor_scope);
 
@@ -500,6 +507,7 @@ impl EditorView {
             Mode::Insert => theme.find_highlight_exact("ui.cursor.primary.insert"),
             Mode::Select => theme.find_highlight_exact("ui.cursor.primary.select"),
             Mode::Normal => theme.find_highlight_exact("ui.cursor.primary.normal"),
+            Mode::FileTree => theme.find_highlight_exact("ui.cursor.primary.normal"),
         }
         .unwrap_or(base_primary_cursor_scope);
 
@@ -717,11 +725,7 @@ impl EditorView {
         theme: &Theme,
     ) {
         use helix_core::diagnostic::Severity;
-        use tui::{
-            layout::Alignment,
-            text::Text,
-            widgets::{Paragraph, Widget, Wrap},
-        };
+        use tui::{layout::Alignment, widgets::Wrap};
 
         let cursor = doc
             .selection(view.id)
@@ -856,6 +860,102 @@ impl EditorView {
                 }
             }
         }
+    }
+
+    pub fn render_file_tree(
+        &self,
+        editor: &Editor,
+        file_tree: &FileTree,
+        area: Rect,
+        surface: &mut Surface,
+    ) {
+        // use no selection style if not in focus
+        let selection_style = if matches!(editor.mode, Mode::FileTree) {
+            editor.theme.get("ui.selection")
+        } else {
+            Style::new()
+        };
+        let border_style = editor.theme.get("ui.window");
+        let dir_icon_style = editor.theme.get("ui.file-tree.dir-icon");
+        let dir_text_style = editor.theme.get("ui.file-tree.dir-text");
+        let file_icon_style = editor.theme.get("ui.file-tree.file-icon");
+        let file_text_style = editor.theme.get("ui.file-tree.file-text");
+        let indent_guide = editor.theme.get("ui.file-tree.indent-guide");
+
+        // render tree
+        let items = file_tree.flatten_with_depth();
+        let rows = items
+            .iter()
+            .enumerate()
+            .map(|(i, (item, depth))| {
+                // render first item (cwd) differently
+                if i == 0 {
+                    Row::new(vec![Spans::from(vec![
+                        // Span::styled(if item.is_expanded { " " } else { " " }, dir_icon_style),
+                        Span::styled(&item.name, file_text_style),
+                    ])])
+                } else {
+                    let mut prefix = String::new();
+                    // cwd has depth 0, only redner prefix for depth >= 1
+                    if item.is_dir && *depth == 1 {
+                        prefix += if item.is_expanded { " " } else { " " };
+                    } else {
+                        prefix += "  ";
+                    }
+                    if *depth > 1 {
+                        for _ in 0..*depth - 2 {
+                            prefix += VERTICAL;
+                            prefix += " ";
+                        }
+                        if item.is_dir {
+                            prefix += if item.is_expanded { " " } else { " " };
+                        } else {
+                            let next = items.get(i + 1);
+                            if next.is_some_and(|next| next.1 < *depth) {
+                                prefix += BOTTOM_LEFT;
+                            } else {
+                                prefix += VERTICAL;
+                            }
+                            prefix += " ";
+                        }
+                    }
+                    if item.is_dir {
+                        Row::new(vec![Spans::from(vec![
+                            Span::styled(prefix, indent_guide),
+                            Span::styled(
+                                if item.is_expanded { " " } else { " " },
+                                dir_icon_style,
+                            ),
+                            Span::styled(&item.name, dir_text_style),
+                        ])])
+                    } else {
+                        Row::new(vec![Spans::from(vec![
+                            Span::styled(prefix, indent_guide),
+                            Span::styled(" ", file_icon_style),
+                            Span::styled(&item.name, file_text_style),
+                        ])])
+                    }
+                }
+            })
+            .collect::<Vec<Row>>();
+        let widths = vec![Constraint::Length(area.width); rows.len()];
+        let table = Table::new(rows)
+            .block(
+                Block::new()
+                    .borders(Borders::RIGHT)
+                    .border_style(border_style),
+            )
+            .highlight_style(selection_style)
+            .widths(&widths);
+        table.render_table(
+            area,
+            surface,
+            &mut TableState {
+                offset: 0,
+                selected: Some(file_tree.selection),
+            },
+            false,
+        );
     }
 
     /// Handle events by looking them up in `self.keymaps`. Returns None
@@ -1540,12 +1640,24 @@ impl Component for EditorView {
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
+        if cx.editor.file_tree.open {
+            editor_area = editor_area.clip_left(FILE_TREE_WIDTH);
+        }
 
         // if the terminal size suddenly changed, we need to trigger a resize
         cx.editor.resize(editor_area);
 
         if use_bufferline {
-            Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            // shift bufferline to right if file tree is open
+            if cx.editor.file_tree.open {
+                Self::render_bufferline(
+                    cx.editor,
+                    area.clip_left(FILE_TREE_WIDTH).with_height(1),
+                    surface,
+                );
+            } else {
+                Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            }
         }
 
         for (view, is_focused) in cx.editor.tree.views() {
@@ -1558,6 +1670,15 @@ impl Component for EditorView {
                 info.render(area, surface, cx);
                 cx.editor.autoinfo = Some(info)
             }
+        }
+
+        if cx.editor.file_tree.open {
+            self.render_file_tree(
+                cx.editor,
+                &cx.editor.file_tree,
+                area.with_width(FILE_TREE_WIDTH).clip_bottom(1),
+                surface,
+            );
         }
 
         let key_width = 15u16; // for showing pending keys
