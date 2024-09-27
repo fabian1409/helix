@@ -7,7 +7,9 @@ use ropey::RopeSlice;
 
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     ffi::OsString,
+    fs::DirEntry,
     ops::Range,
     path::{Component, Path, PathBuf, MAIN_SEPARATOR_STR},
 };
@@ -297,6 +299,51 @@ pub fn expand<T: AsRef<Path> + ?Sized>(path: &T) -> Cow<'_, Path> {
     match crate::env::expand(&*path) {
         Cow::Borrowed(_) => path,
         Cow::Owned(path) => PathBuf::from(path).into(),
+    }
+}
+
+pub fn copy_recursively(from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io::Result<()> {
+    std::fs::create_dir_all(&to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let filetype = entry.file_type()?;
+        if filetype.is_dir() {
+            copy_recursively(entry.path(), to.as_ref().join(entry.file_name()))?;
+        } else {
+            std::fs::copy(entry.path(), to.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn read_dir_sorted(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => {
+            let mut entries = entries
+                .flatten()
+                .filter(|x| {
+                    !x.path().symlink_metadata().unwrap().is_symlink()
+                        && (show_hidden || !x.file_name().to_string_lossy().starts_with('.'))
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by(|a, b| {
+                let a = a.path();
+                let b = b.path();
+                let a_name = a.file_name().unwrap().to_string_lossy().to_lowercase();
+                let b_name = b.file_name().unwrap().to_string_lossy().to_lowercase();
+                if a.is_dir() && b.is_dir() {
+                    a_name.cmp(&b_name)
+                } else if a.is_dir() && !b.is_dir() {
+                    Ordering::Less
+                } else if !a.is_dir() && b.is_dir() {
+                    Ordering::Greater
+                } else {
+                    a_name.cmp(&b_name)
+                }
+            });
+            entries
+        }
+        Err(_) => vec![],
     }
 }
 
