@@ -2,9 +2,12 @@ use std::cmp::Ordering;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 
+use super::keyboard::KeyCode;
+use helix_stdx::path::fold_home_dir;
+
 pub const FILE_TREE_WIDTH: u16 = 40;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeItem {
     pub name: String,
     pub path: PathBuf,
@@ -29,32 +32,62 @@ impl From<DirEntry> for FileTreeItem {
             path: value.path(),
             is_dir: meta.is_dir(),
             is_expanded: false,
-            depth: 0,
+            depth: 1,
         }
     }
 }
 
+impl Ord for FileTreeItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let name = self.name.to_lowercase();
+        let other_name = other.name.to_lowercase();
+        if self.is_dir && other.is_dir {
+            name.cmp(&other_name)
+        } else if self.is_dir && !other.is_dir {
+            Ordering::Less
+        } else if !self.is_dir && other.is_dir {
+            Ordering::Greater
+        } else {
+            name.cmp(&other_name)
+        }
+    }
+}
+
+impl PartialOrd for FileTreeItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct FileTree {
     pub items: Vec<FileTreeItem>,
     pub selection: Option<usize>,
+    pub open: bool,
     pub focused: bool,
-}
-
-impl Default for FileTree {
-    fn default() -> Self {
-        FileTree::new()
-    }
+    pub copied: Option<FileTreeItem>,
+    pub last_key: Option<KeyCode>,
 }
 
 impl FileTree {
     pub fn new() -> Self {
         let cwd = std::env::current_dir().unwrap();
         let dir = read_dir_sorted(&cwd, false);
-        let items = dir.into_iter().map(FileTreeItem::from).collect::<Vec<_>>();
+        let mut items = vec![FileTreeItem {
+            name: fold_home_dir(&cwd).to_string_lossy().to_string(),
+            path: cwd,
+            is_dir: true,
+            is_expanded: true,
+            depth: 0,
+        }];
+        items.extend(dir.into_iter().map(FileTreeItem::from).collect::<Vec<_>>());
         Self {
             items,
             selection: Some(0),
+            open: false,
             focused: true,
+            copied: None,
+            last_key: None,
         }
     }
 
@@ -96,6 +129,19 @@ impl FileTree {
             self.items.remove(selection + 1);
         }
     }
+
+    pub fn insert_and_adjust(&mut self, item: FileTreeItem) {
+        let selection = self.selection.unwrap_or_default();
+        let index = self
+            .items
+            .iter()
+            .skip(selection + 1)
+            .position(|e| e.depth == item.depth && e > &item)
+            .unwrap()
+            + selection
+            + 1;
+        self.items.insert(index, item);
+    }
 }
 
 fn read_dir_sorted(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
@@ -111,8 +157,8 @@ fn read_dir_sorted(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
             entries.sort_by(|a, b| {
                 let a = a.path();
                 let b = b.path();
-                let a_name = a.file_name().unwrap().to_string_lossy();
-                let b_name = b.file_name().unwrap().to_string_lossy();
+                let a_name = a.file_name().unwrap().to_string_lossy().to_lowercase();
+                let b_name = b.file_name().unwrap().to_string_lossy().to_lowercase();
                 if a.is_dir() && b.is_dir() {
                     a_name.cmp(&b_name)
                 } else if a.is_dir() && !b.is_dir() {
