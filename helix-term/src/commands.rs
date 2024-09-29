@@ -41,7 +41,6 @@ use helix_core::{
 use helix_view::{
     document::{FormatterError, Mode, SCRATCH_BUFFER_NAME},
     editor::Action,
-    file_tree::FileTree,
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
@@ -6302,9 +6301,10 @@ fn jump_to_word(cx: &mut Context, behaviour: Movement) {
 }
 
 fn file_tree(cx: &mut Context) {
-    if let Some(file_tree) = cx.editor.file_tree.as_mut() {
-        file_tree.focused = true;
+    if cx.editor.file_tree.open {
+        cx.editor.file_tree.focused = true;
     } else {
-        cx.editor.file_tree = Some(FileTree::new());
+        cx.editor.file_tree.open = true;
+        cx.editor.file_tree.focused = true;
     }
 }

@@ -201,6 +201,20 @@ pub fn get_truncated_path(path: impl AsRef<Path>) -> PathBuf {
     ret
 }
 
+pub fn copy_recursively(from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io::Result<()> {
+    std::fs::create_dir_all(&to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let filetype = entry.file_type()?;
+        if filetype.is_dir() {
+            copy_recursively(entry.path(), to.as_ref().join(entry.file_name()))?;
+        } else {
+            std::fs::copy(entry.path(), to.as_ref().join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
