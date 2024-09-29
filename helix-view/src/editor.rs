@@ -1101,7 +1101,7 @@ pub struct Editor {
     pub status_msg: Option<(Cow<'static, str>, Severity)>,
     pub autoinfo: Option<Info>,
 
-    pub file_tree: Option<FileTree>,
+    pub file_tree: FileTree,
 
     pub config: Arc<dyn DynAccess<Config>>,
     pub auto_pairs: Option<AutoPairs>,
@@ -1241,7 +1241,7 @@ impl Editor {
             ))),
             status_msg: None,
             autoinfo: None,
-            file_tree: None,
+            file_tree: FileTree::new(),
             idle_timer: Box::pin(sleep(conf.idle_timeout)),
             redraw_timer: Box::pin(sleep(Duration::MAX)),
             last_motion: None,
@@ -1974,9 +1974,9 @@ impl Editor {
 
     pub fn focus_direction(&mut self, direction: tree::Direction) {
         let current_view = self.tree.focus;
-        if let Some(file_tree) = self.file_tree.as_mut() {
-            if file_tree.focused && matches!(direction, tree::Direction::Right) {
-                file_tree.focused = false;
+        if self.file_tree.open {
+            if self.file_tree.focused && matches!(direction, tree::Direction::Right) {
+                self.file_tree.focused = false;
                 let id = self
                     .tree
                     .views()
@@ -1985,18 +1985,11 @@ impl Editor {
                     .0
                     .id;
                 self.focus(id);
-            } else if !file_tree.focused && matches!(direction, tree::Direction::Left) {
-                let is_left_most_focused = self
-                    .tree
-                    .views()
-                    .min_by(|x, y| x.0.area.x.cmp(&y.0.area.x))
-                    .unwrap()
-                    .1;
-                if is_left_most_focused {
-                    file_tree.focused = true;
-                } else if let Some(id) = self.tree.find_split_in_direction(current_view, direction)
-                {
+            } else if !self.file_tree.focused && matches!(direction, tree::Direction::Left) {
+                if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
                     self.focus(id)
+                } else {
+                    self.file_tree.focused = true;
                 }
             } else if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
                 self.focus(id)
