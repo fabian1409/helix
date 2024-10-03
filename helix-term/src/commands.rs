@@ -567,6 +567,7 @@ impl MappableCommand {
         command_palette, "Open command palette",
         goto_word, "Jump to a two-character label",
         extend_to_word, "Extend to a two-character label",
+        file_tree, "Open file tree",
     );
 }
 
@@ -5138,6 +5139,8 @@ fn jump_forward(cx: &mut Context) {
         }
 
         doc.set_selection(view.id, selection);
+        // Document we switch to might not have been opened in the view before
+        doc.ensure_view_init(view.id);
         view.ensure_cursor_in_view_center(doc, config.scrolloff);
     };
 }
@@ -5158,6 +5161,8 @@ fn jump_backward(cx: &mut Context) {
         }
 
         doc.set_selection(view.id, selection);
+        // Document we switch to might not have been opened in the view before
+        doc.ensure_view_init(view.id);
         view.ensure_cursor_in_view_center(doc, config.scrolloff);
     };
 }
@@ -6293,4 +6298,13 @@ fn jump_to_word(cx: &mut Context, behaviour: Movement) {
         }
     }
     jump_to_label(cx, words, behaviour)
+}
+
+fn file_tree(cx: &mut Context) {
+    if cx.editor.file_tree.open {
+        cx.editor.file_tree.focused = true;
+    } else {
+        cx.editor.file_tree.open = true;
+        cx.editor.file_tree.focused = true;
+    }
 }

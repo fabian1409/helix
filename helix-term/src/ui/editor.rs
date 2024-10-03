@@ -1,3 +1,4 @@
+use super::{Prompt, PromptEvent};
 use crate::{
     commands::{self, OnKeyCallback},
     compositor::{Component, Context, Event, EventResult},
@@ -11,7 +12,6 @@ use crate::{
         Completion, CompletionItem, ProgressSpinners,
     },
 };
-
 use helix_core::{
     diagnostic::NumberOrString,
     graphemes::{next_grapheme_boundary, prev_grapheme_boundary},
@@ -21,18 +21,25 @@ use helix_core::{
     unicode::width::UnicodeWidthStr,
     visual_offset_from_block, Change, Position, Range, Selection, Transaction,
 };
+use helix_stdx::path::copy_recursively;
 use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SavePoint, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
+    file_tree::{FileTree, FileTreeItem, FILE_TREE_WIDTH},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
     Document, Editor, Theme, View,
 };
 use std::{mem::take, num::NonZeroUsize, path::PathBuf, rc::Rc, sync::Arc};
-
-use tui::{buffer::Buffer as Surface, text::Span};
+use tui::{
+    buffer::Buffer as Surface,
+    layout::Constraint,
+    symbols::line::{BOTTOM_LEFT, VERTICAL},
+    text::{Span, Spans, Text},
+    widgets::{Block, Borders, Paragraph, Row, Table, TableState, Widget},
+};
 
 pub struct EditorView {
     pub keymaps: Keymaps,
@@ -717,11 +724,7 @@ impl EditorView {
         theme: &Theme,
     ) {
         use helix_core::diagnostic::Severity;
-        use tui::{
-            layout::Alignment,
-            text::Text,
-            widgets::{Paragraph, Widget, Wrap},
-        };
+        use tui::{layout::Alignment, widgets::Wrap};
 
         let cursor = doc
             .selection(view.id)
@@ -856,6 +859,98 @@ impl EditorView {
                 }
             }
         }
+    }
+
+    pub fn render_file_tree(
+        &self,
+        editor: &Editor,
+        file_tree: &FileTree,
+        area: Rect,
+        surface: &mut Surface,
+    ) {
+        // use no selection style if not in focus
+        let selection_style = if file_tree.focused {
+            editor.theme.get("ui.selection")
+        } else {
+            Style::new()
+        };
+        let border_style = editor.theme.get("ui.window");
+        let text_style = editor.theme.get("ui.text");
+        let dir_icon_style = editor.theme.get("keyword");
+        let dir_style = editor.theme.get("function");
+
+        // render tree
+        let rows = file_tree
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                // render first item (cwd) differently
+                if i == 0 {
+                    Row::new(vec![Spans::from(vec![
+                        Span::styled(" ", dir_icon_style),
+                        Span::styled(&item.name, text_style),
+                    ])])
+                } else {
+                    let mut prefix = String::new();
+                    // cwd has depth 0, only redner prefix for depth >= 1
+                    if item.is_dir && item.depth == 1 {
+                        prefix += if item.is_expanded { " " } else { " " };
+                    } else {
+                        prefix += "  ";
+                    }
+                    if item.depth > 1 {
+                        for _ in 0..item.depth - 2 {
+                            prefix += VERTICAL;
+                            prefix += " ";
+                        }
+                        if item.is_dir {
+                            prefix += if item.is_expanded { " " } else { " " };
+                        } else {
+                            let next = file_tree.items.get(i + 1);
+                            if next.is_some_and(|next| next.depth < item.depth) {
+                                prefix += BOTTOM_LEFT;
+                            } else {
+                                prefix += VERTICAL;
+                            }
+                            prefix += " ";
+                        }
+                    }
+                    if item.is_dir {
+                        Row::new(vec![Spans::from(vec![
+                            Span::styled(prefix, border_style),
+                            Span::styled(" ", dir_icon_style),
+                            Span::styled(&item.name, dir_style),
+                        ])])
+                    } else {
+                        Row::new(vec![Spans::from(vec![
+                            Span::styled(prefix, border_style),
+                            Span::styled(" ", text_style),
+                            Span::styled(&item.name, text_style),
+                        ])])
+                    }
+                }
+            })
+            .collect::<Vec<Row>>();
+        let widths = vec![Constraint::Length(FILE_TREE_WIDTH); rows.len()];
+        let table = Table::new(rows)
+            .block(
+                Block::new()
+                    .borders(Borders::RIGHT)
+                    .border_style(border_style),
+            )
+            .style(text_style)
+            .highlight_style(selection_style)
+            .widths(&widths);
+        table.render_table(
+            area.with_width(FILE_TREE_WIDTH).clip_bottom(1),
+            surface,
+            &mut TableState {
+                offset: 0,
+                selected: file_tree.selection,
+            },
+            false,
+        );
     }
 
     /// Handle events by looking them up in `self.keymaps`. Returns None
@@ -1022,6 +1117,196 @@ impl EditorView {
                 }
             }
         }
+    }
+
+    fn handle_file_tree(&mut self, cx: &mut commands::Context, key: KeyEvent) -> bool {
+        let mut file_tree = std::mem::take(&mut cx.editor.file_tree);
+        let mut handled = true;
+        match key.code {
+            KeyCode::Char('j') => file_tree.move_down(),
+            KeyCode::Char('k') => file_tree.move_up(),
+            // handle in goto mode?
+            KeyCode::Char('g') => {
+                if file_tree
+                    .last_key
+                    .is_some_and(|last_key| last_key == KeyCode::Char('g'))
+                {
+                    file_tree.selection = Some(0);
+                } else {
+                    cx.editor.set_status("g");
+                }
+            }
+            KeyCode::Char('e') => {
+                if file_tree
+                    .last_key
+                    .is_some_and(|last_key| last_key == KeyCode::Char('g'))
+                {
+                    file_tree.selection = Some(file_tree.items.len() - 1);
+                }
+            }
+            KeyCode::Enter => {
+                let selection = file_tree.selection;
+                let item = file_tree.items.get(selection.unwrap()).unwrap();
+                if item.is_dir {
+                    if item.is_expanded {
+                        file_tree.collapse();
+                    } else {
+                        file_tree.expand();
+                    }
+                } else {
+                    cx.editor
+                        .open(&item.path, helix_view::editor::Action::Replace)
+                        .unwrap();
+                }
+            }
+            KeyCode::Char('d') => {
+                let selection = file_tree.selection.unwrap();
+                let item = file_tree.items.get(selection).unwrap().clone();
+                let prompt = Prompt::new(
+                    format!("delete '{}'? (y/n):", item.name).into(),
+                    None,
+                    super::completers::none,
+                    move |cx, input, event| {
+                        if event != PromptEvent::Validate {
+                            return;
+                        }
+                        if input.eq("y") {
+                            let file_tree = &mut cx.editor.file_tree;
+                            if item.is_dir {
+                                if item.is_expanded {
+                                    file_tree.collapse();
+                                }
+                                file_tree.items.remove(selection);
+                                let res = std::fs::remove_dir_all(&item.path);
+                                log::error!("rm dir {res:?}");
+                            } else {
+                                file_tree.items.remove(selection);
+                                let _ = std::fs::remove_file(&item.path);
+                            }
+                        }
+                    },
+                );
+                cx.push_layer(Box::new(prompt));
+            }
+            KeyCode::Char('y') => {
+                let selection = file_tree.selection.unwrap();
+                let item = file_tree.items.get(selection).unwrap().clone();
+                cx.editor.set_status(format!("'{}' copied", item.name));
+                file_tree.copied = Some(item);
+            }
+            KeyCode::Char('p') => {
+                let selection = file_tree.selection.unwrap();
+                let dest = file_tree.items.get(selection).unwrap();
+                if dest.is_dir {
+                    if let Some(mut item) = file_tree.copied.clone() {
+                        let to = dest.path.join(&item.name);
+                        item.depth = dest.depth + 1;
+                        if item.is_dir {
+                            let _ = copy_recursively(&item.path, to);
+                        } else {
+                            let _ = std::fs::copy(&item.path, to);
+                        }
+                        if dest.is_expanded {
+                            file_tree.insert_and_adjust(item);
+                        }
+                    } else {
+                        cx.editor.set_status("nothing to paste".to_string());
+                    }
+                }
+            }
+            KeyCode::Char('r') => {
+                let selection = file_tree.selection.unwrap();
+                let item = file_tree.items.get(selection).unwrap().clone();
+                let prompt = Prompt::new(
+                    "rename-to:".into(),
+                    None,
+                    super::completers::none,
+                    move |cx, input, event| {
+                        if event != PromptEvent::Validate {
+                            return;
+                        }
+                        let to = item.path.with_file_name(input);
+                        let _ = std::fs::rename(&item.path, &to);
+                        let file_tree = &mut cx.editor.file_tree;
+                        let mut item = file_tree.items.remove(selection);
+                        item.name = input.to_string();
+                        item.path = to;
+                        if item.is_expanded {
+                            // remove children if we rename dir, else they have invalid paths
+                            file_tree.collapse();
+                        }
+                        file_tree.insert_and_adjust(item);
+                    },
+                )
+                .with_line(item.name, cx.editor);
+                cx.push_layer(Box::new(prompt));
+            }
+            KeyCode::Char('n') => {
+                let selection = file_tree.selection.unwrap();
+                let prompt = Prompt::new(
+                    "new:".into(),
+                    None,
+                    super::completers::none,
+                    move |cx, input, event| {
+                        if event != PromptEvent::Validate {
+                            return;
+                        }
+                        let file_tree = &mut cx.editor.file_tree;
+                        let dest = file_tree.items.get(selection).unwrap();
+                        if dest.is_dir {
+                            let path = dest.path.join(input);
+                            let _ = std::fs::File::create(&path);
+                            if dest.is_expanded {
+                                let item = FileTreeItem {
+                                    name: input.to_string(),
+                                    path,
+                                    is_dir: false,
+                                    is_expanded: false,
+                                    depth: dest.depth + 1,
+                                };
+                                file_tree.insert_and_adjust(item);
+                            }
+                        }
+                    },
+                );
+                cx.push_layer(Box::new(prompt));
+            }
+            KeyCode::Char('/') => {
+                let prompt = Prompt::new(
+                    "search:".into(),
+                    None,
+                    super::completers::none,
+                    move |cx, input, _| {
+                        let file_tree = &mut cx.editor.file_tree;
+                        let items = &file_tree.items;
+                        let selection = items.iter().position(|item| item.name.starts_with(input));
+                        if let Some(selection) = selection {
+                            file_tree.selection = Some(selection);
+                        }
+                    },
+                );
+                cx.push_layer(Box::new(prompt));
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                file_tree.open = false;
+                file_tree.focused = false;
+            }
+            _ => handled = false,
+        }
+        // fix gg followed by g being treated as another gg
+        if file_tree
+            .last_key
+            .is_some_and(|last_key| last_key == KeyCode::Char('g'))
+            && key.code == KeyCode::Char('g')
+        {
+            file_tree.last_key = None;
+        } else {
+            file_tree.last_key = Some(key.code);
+        }
+
+        cx.editor.file_tree = file_tree;
+
+        handled
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1411,7 +1696,14 @@ impl Component for EditorView {
                                 self.last_insert.1.push(InsertEvent::Key(key));
                             }
                         }
-                        mode => self.command_mode(mode, &mut cx, key),
+                        mode => {
+                            if !(cx.editor.file_tree.open
+                                && cx.editor.file_tree.focused
+                                && self.handle_file_tree(&mut cx, key))
+                            {
+                                self.command_mode(mode, &mut cx, key)
+                            }
+                        }
                     }
                 }
 
@@ -1491,16 +1783,31 @@ impl Component for EditorView {
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
+        if cx.editor.file_tree.open {
+            editor_area = editor_area.clip_left(FILE_TREE_WIDTH);
+        }
 
         // if the terminal size suddenly changed, we need to trigger a resize
         cx.editor.resize(editor_area);
 
         if use_bufferline {
-            Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            // shift bufferline to right if file tree is open
+            if cx.editor.file_tree.open {
+                Self::render_bufferline(
+                    cx.editor,
+                    area.clip_left(FILE_TREE_WIDTH).with_height(1),
+                    surface,
+                );
+            } else {
+                Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            }
         }
 
         for (view, is_focused) in cx.editor.tree.views() {
             let doc = cx.editor.document(view.doc).unwrap();
+            let is_focused =
+                !(cx.editor.file_tree.open && cx.editor.file_tree.focused) && is_focused;
+
             self.render_view(cx.editor, doc, view, area, surface, is_focused);
         }
 
@@ -1572,6 +1879,10 @@ impl Component for EditorView {
 
         if let Some(completion) = self.completion.as_mut() {
             completion.render(area, surface, cx);
+        }
+
+        if cx.editor.file_tree.open {
+            self.render_file_tree(cx.editor, &cx.editor.file_tree, area, surface);
         }
     }
 
