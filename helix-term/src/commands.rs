@@ -1223,7 +1223,9 @@ fn goto_next_paragraph(cx: &mut Context) {
 }
 
 fn goto_file_start(cx: &mut Context) {
-    if cx.count.is_some() {
+    if cx.editor.file_tree.focused {
+        cx.editor.file_tree.goto_start();
+    } else if cx.count.is_some() {
         goto_line(cx);
     } else {
         let (view, doc) = current!(cx.editor);
@@ -3556,22 +3558,26 @@ fn goto_line_without_jumplist(editor: &mut Editor, count: Option<NonZeroUsize>) 
 }
 
 fn goto_last_line(cx: &mut Context) {
-    let (view, doc) = current!(cx.editor);
-    let text = doc.text().slice(..);
-    let line_idx = if text.line(text.len_lines() - 1).len_chars() == 0 {
-        // If the last line is blank, don't jump to it.
-        text.len_lines().saturating_sub(2)
+    if cx.editor.file_tree.focused {
+        cx.editor.file_tree.goto_end();
     } else {
-        text.len_lines() - 1
-    };
-    let pos = text.line_to_char(line_idx);
-    let selection = doc
-        .selection(view.id)
-        .clone()
-        .transform(|range| range.put_cursor(text, pos, cx.editor.mode == Mode::Select));
+        let (view, doc) = current!(cx.editor);
+        let text = doc.text().slice(..);
+        let line_idx = if text.line(text.len_lines() - 1).len_chars() == 0 {
+            // If the last line is blank, don't jump to it.
+            text.len_lines().saturating_sub(2)
+        } else {
+            text.len_lines() - 1
+        };
+        let pos = text.line_to_char(line_idx);
+        let selection = doc
+            .selection(view.id)
+            .clone()
+            .transform(|range| range.put_cursor(text, pos, cx.editor.mode == Mode::Select));
 
-    push_jump(view, doc);
-    doc.set_selection(view.id, selection);
+        push_jump(view, doc);
+        doc.set_selection(view.id, selection);
+    }
 }
 
 fn goto_last_accessed_file(cx: &mut Context) {

@@ -2,10 +2,9 @@ use std::cmp::Ordering;
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 
-use super::keyboard::KeyCode;
 use helix_stdx::path::fold_home_dir;
 
-pub const FILE_TREE_WIDTH: u16 = 40;
+pub const FILE_TREE_MAX_WIDTH: u16 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeItem {
@@ -62,11 +61,10 @@ impl PartialOrd for FileTreeItem {
 #[derive(Debug, Default)]
 pub struct FileTree {
     pub items: Vec<FileTreeItem>,
-    pub selection: Option<usize>,
+    pub selection: usize,
     pub open: bool,
     pub focused: bool,
     pub copied: Option<FileTreeItem>,
-    pub last_key: Option<KeyCode>,
 }
 
 impl FileTree {
@@ -83,27 +81,33 @@ impl FileTree {
         items.extend(dir.into_iter().map(FileTreeItem::from).collect::<Vec<_>>());
         Self {
             items,
-            selection: Some(0),
+            selection: 0,
             open: false,
             focused: true,
             copied: None,
-            last_key: None,
         }
     }
 
     pub fn move_up(&mut self) {
-        self.selection = self.selection.map(|s| s.saturating_sub(1));
+        self.selection = self.selection.saturating_sub(1);
     }
 
     pub fn move_down(&mut self) {
-        self.selection = self
-            .selection
-            .map(|s| if s < self.items.len() - 1 { s + 1 } else { s });
+        if self.selection < self.items.len() - 1 {
+            self.selection += 1;
+        }
+    }
+
+    pub fn goto_start(&mut self) {
+        self.selection = 0;
+    }
+
+    pub fn goto_end(&mut self) {
+        self.selection = self.items.len() - 1;
     }
 
     pub fn expand(&mut self) {
-        let selection = self.selection.unwrap();
-        let item = self.items.get_mut(selection).unwrap();
+        let item = self.items.get_mut(self.selection).unwrap();
         item.is_expanded = true;
         let items = read_dir_sorted(&item.path, false)
             .into_iter()
@@ -111,36 +115,48 @@ impl FileTree {
             .collect::<Vec<FileTreeItem>>();
         let len = items.len();
         self.items.extend(items);
-        self.items[selection + 1..].rotate_right(len);
+        self.items[self.selection + 1..].rotate_right(len);
     }
 
     pub fn collapse(&mut self) {
-        let selection = self.selection.unwrap();
-        let item = self.items.get_mut(selection).unwrap();
+        let item = self.items.get_mut(self.selection).unwrap();
         item.is_expanded = false;
-        let depth = self.items.get(selection).unwrap().depth;
+        let depth = self.items.get(self.selection).unwrap().depth;
         let remove_len = self
             .items
             .iter()
-            .skip(selection + 1)
+            .skip(self.selection + 1)
             .take_while(|i| i.depth > depth)
             .count();
         for _ in 0..remove_len {
-            self.items.remove(selection + 1);
+            self.items.remove(self.selection + 1);
         }
     }
 
     pub fn insert_and_adjust(&mut self, item: FileTreeItem) {
-        let selection = self.selection.unwrap_or_default();
         let index = self
             .items
             .iter()
-            .skip(selection + 1)
+            .skip(self.selection + 1)
             .position(|e| e.depth == item.depth && e > &item)
             .unwrap()
-            + selection
+            + self.selection
             + 1;
         self.items.insert(index, item);
+    }
+
+    pub fn reload(&mut self) {
+        let cwd = std::env::current_dir().unwrap();
+        let dir = read_dir_sorted(&cwd, false);
+        let mut items = vec![FileTreeItem {
+            name: fold_home_dir(&cwd).to_string_lossy().to_string(),
+            path: cwd,
+            is_dir: true,
+            is_expanded: true,
+            depth: 0,
+        }];
+        items.extend(dir.into_iter().map(FileTreeItem::from).collect::<Vec<_>>());
+        self.items = items;
     }
 }
 
