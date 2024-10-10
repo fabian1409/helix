@@ -1,4 +1,3 @@
-use super::{Prompt, PromptEvent};
 use crate::{
     commands::{self, OnKeyCallback},
     compositor::{Component, Context, Event, EventResult},
@@ -21,12 +20,11 @@ use helix_core::{
     unicode::width::UnicodeWidthStr,
     visual_offset_from_block, Change, Position, Range, Selection, Transaction,
 };
-use helix_stdx::path::copy_recursively;
 use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SavePoint, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
-    file_tree::{FileTree, FileTreeItem, FILE_TREE_WIDTH},
+    file_tree::{FileTree, FILE_TREE_MAX_WIDTH},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
@@ -501,6 +499,7 @@ impl EditorView {
             Mode::Insert => theme.find_scope_index_exact("ui.cursor.insert"),
             Mode::Select => theme.find_scope_index_exact("ui.cursor.select"),
             Mode::Normal => theme.find_scope_index_exact("ui.cursor.normal"),
+            Mode::FileTree => theme.find_scope_index_exact("ui.cursor.normal"),
         }
         .unwrap_or(base_cursor_scope);
 
@@ -508,6 +507,7 @@ impl EditorView {
             Mode::Insert => theme.find_scope_index_exact("ui.cursor.primary.insert"),
             Mode::Select => theme.find_scope_index_exact("ui.cursor.primary.select"),
             Mode::Normal => theme.find_scope_index_exact("ui.cursor.primary.normal"),
+            Mode::FileTree => theme.find_scope_index_exact("ui.cursor.primary.normal"),
         }
         .unwrap_or(base_primary_cursor_scope);
 
@@ -869,7 +869,7 @@ impl EditorView {
         surface: &mut Surface,
     ) {
         // use no selection style if not in focus
-        let selection_style = if file_tree.focused {
+        let selection_style = if matches!(editor.mode, Mode::FileTree) {
             editor.theme.get("ui.selection")
         } else {
             Style::new()
@@ -888,7 +888,7 @@ impl EditorView {
                 // render first item (cwd) differently
                 if i == 0 {
                     Row::new(vec![Spans::from(vec![
-                        Span::styled(" ", dir_icon_style),
+                        // Span::styled(if item.is_expanded { " " } else { " " }, dir_icon_style),
                         Span::styled(&item.name, text_style),
                     ])])
                 } else {
@@ -919,7 +919,10 @@ impl EditorView {
                     if item.is_dir {
                         Row::new(vec![Spans::from(vec![
                             Span::styled(prefix, border_style),
-                            Span::styled(" ", dir_icon_style),
+                            Span::styled(
+                                if item.is_expanded { " " } else { " " },
+                                dir_icon_style,
+                            ),
                             Span::styled(&item.name, dir_style),
                         ])])
                     } else {
@@ -932,7 +935,7 @@ impl EditorView {
                 }
             })
             .collect::<Vec<Row>>();
-        let widths = vec![Constraint::Length(FILE_TREE_WIDTH); rows.len()];
+        let widths = vec![Constraint::Length(area.width); rows.len()];
         let table = Table::new(rows)
             .block(
                 Block::new()
@@ -943,11 +946,11 @@ impl EditorView {
             .highlight_style(selection_style)
             .widths(&widths);
         table.render_table(
-            area.with_width(FILE_TREE_WIDTH).clip_bottom(1),
+            area,
             surface,
             &mut TableState {
                 offset: 0,
-                selected: file_tree.selection,
+                selected: Some(file_tree.selection),
             },
             false,
         );
@@ -1117,196 +1120,6 @@ impl EditorView {
                 }
             }
         }
-    }
-
-    fn handle_file_tree(&mut self, cx: &mut commands::Context, key: KeyEvent) -> bool {
-        let mut file_tree = std::mem::take(&mut cx.editor.file_tree);
-        let mut handled = true;
-        match key.code {
-            KeyCode::Char('j') => file_tree.move_down(),
-            KeyCode::Char('k') => file_tree.move_up(),
-            // handle in goto mode?
-            KeyCode::Char('g') => {
-                if file_tree
-                    .last_key
-                    .is_some_and(|last_key| last_key == KeyCode::Char('g'))
-                {
-                    file_tree.selection = Some(0);
-                } else {
-                    cx.editor.set_status("g");
-                }
-            }
-            KeyCode::Char('e') => {
-                if file_tree
-                    .last_key
-                    .is_some_and(|last_key| last_key == KeyCode::Char('g'))
-                {
-                    file_tree.selection = Some(file_tree.items.len() - 1);
-                }
-            }
-            KeyCode::Enter => {
-                let selection = file_tree.selection;
-                let item = file_tree.items.get(selection.unwrap()).unwrap();
-                if item.is_dir {
-                    if item.is_expanded {
-                        file_tree.collapse();
-                    } else {
-                        file_tree.expand();
-                    }
-                } else {
-                    cx.editor
-                        .open(&item.path, helix_view::editor::Action::Replace)
-                        .unwrap();
-                }
-            }
-            KeyCode::Char('d') => {
-                let selection = file_tree.selection.unwrap();
-                let item = file_tree.items.get(selection).unwrap().clone();
-                let prompt = Prompt::new(
-                    format!("delete '{}'? (y/n):", item.name).into(),
-                    None,
-                    super::completers::none,
-                    move |cx, input, event| {
-                        if event != PromptEvent::Validate {
-                            return;
-                        }
-                        if input.eq("y") {
-                            let file_tree = &mut cx.editor.file_tree;
-                            if item.is_dir {
-                                if item.is_expanded {
-                                    file_tree.collapse();
-                                }
-                                file_tree.items.remove(selection);
-                                let res = std::fs::remove_dir_all(&item.path);
-                                log::error!("rm dir {res:?}");
-                            } else {
-                                file_tree.items.remove(selection);
-                                let _ = std::fs::remove_file(&item.path);
-                            }
-                        }
-                    },
-                );
-                cx.push_layer(Box::new(prompt));
-            }
-            KeyCode::Char('y') => {
-                let selection = file_tree.selection.unwrap();
-                let item = file_tree.items.get(selection).unwrap().clone();
-                cx.editor.set_status(format!("'{}' copied", item.name));
-                file_tree.copied = Some(item);
-            }
-            KeyCode::Char('p') => {
-                let selection = file_tree.selection.unwrap();
-                let dest = file_tree.items.get(selection).unwrap();
-                if dest.is_dir {
-                    if let Some(mut item) = file_tree.copied.clone() {
-                        let to = dest.path.join(&item.name);
-                        item.depth = dest.depth + 1;
-                        if item.is_dir {
-                            let _ = copy_recursively(&item.path, to);
-                        } else {
-                            let _ = std::fs::copy(&item.path, to);
-                        }
-                        if dest.is_expanded {
-                            file_tree.insert_and_adjust(item);
-                        }
-                    } else {
-                        cx.editor.set_status("nothing to paste".to_string());
-                    }
-                }
-            }
-            KeyCode::Char('r') => {
-                let selection = file_tree.selection.unwrap();
-                let item = file_tree.items.get(selection).unwrap().clone();
-                let prompt = Prompt::new(
-                    "rename-to:".into(),
-                    None,
-                    super::completers::none,
-                    move |cx, input, event| {
-                        if event != PromptEvent::Validate {
-                            return;
-                        }
-                        let to = item.path.with_file_name(input);
-                        let _ = std::fs::rename(&item.path, &to);
-                        let file_tree = &mut cx.editor.file_tree;
-                        let mut item = file_tree.items.remove(selection);
-                        item.name = input.to_string();
-                        item.path = to;
-                        if item.is_expanded {
-                            // remove children if we rename dir, else they have invalid paths
-                            file_tree.collapse();
-                        }
-                        file_tree.insert_and_adjust(item);
-                    },
-                )
-                .with_line(item.name, cx.editor);
-                cx.push_layer(Box::new(prompt));
-            }
-            KeyCode::Char('n') => {
-                let selection = file_tree.selection.unwrap();
-                let prompt = Prompt::new(
-                    "new:".into(),
-                    None,
-                    super::completers::none,
-                    move |cx, input, event| {
-                        if event != PromptEvent::Validate {
-                            return;
-                        }
-                        let file_tree = &mut cx.editor.file_tree;
-                        let dest = file_tree.items.get(selection).unwrap();
-                        if dest.is_dir {
-                            let path = dest.path.join(input);
-                            let _ = std::fs::File::create(&path);
-                            if dest.is_expanded {
-                                let item = FileTreeItem {
-                                    name: input.to_string(),
-                                    path,
-                                    is_dir: false,
-                                    is_expanded: false,
-                                    depth: dest.depth + 1,
-                                };
-                                file_tree.insert_and_adjust(item);
-                            }
-                        }
-                    },
-                );
-                cx.push_layer(Box::new(prompt));
-            }
-            KeyCode::Char('/') => {
-                let prompt = Prompt::new(
-                    "search:".into(),
-                    None,
-                    super::completers::none,
-                    move |cx, input, _| {
-                        let file_tree = &mut cx.editor.file_tree;
-                        let items = &file_tree.items;
-                        let selection = items.iter().position(|item| item.name.starts_with(input));
-                        if let Some(selection) = selection {
-                            file_tree.selection = Some(selection);
-                        }
-                    },
-                );
-                cx.push_layer(Box::new(prompt));
-            }
-            KeyCode::Esc | KeyCode::Char('q') => {
-                file_tree.open = false;
-                file_tree.focused = false;
-            }
-            _ => handled = false,
-        }
-        // fix gg followed by g being treated as another gg
-        if file_tree
-            .last_key
-            .is_some_and(|last_key| last_key == KeyCode::Char('g'))
-            && key.code == KeyCode::Char('g')
-        {
-            file_tree.last_key = None;
-        } else {
-            file_tree.last_key = Some(key.code);
-        }
-
-        cx.editor.file_tree = file_tree;
-
-        handled
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1696,14 +1509,7 @@ impl Component for EditorView {
                                 self.last_insert.1.push(InsertEvent::Key(key));
                             }
                         }
-                        mode => {
-                            if !(cx.editor.file_tree.open
-                                && cx.editor.file_tree.focused
-                                && self.handle_file_tree(&mut cx, key))
-                            {
-                                self.command_mode(mode, &mut cx, key)
-                            }
-                        }
+                        mode => self.command_mode(mode, &mut cx, key),
                     }
                 }
 
@@ -1780,11 +1586,12 @@ impl Component for EditorView {
 
         // -1 for commandline and -1 for bufferline
         let mut editor_area = area.clip_bottom(1);
+        let file_tree_width = u16::max(FILE_TREE_MAX_WIDTH, (20 * editor_area.width) / 100);
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
         if cx.editor.file_tree.open {
-            editor_area = editor_area.clip_left(FILE_TREE_WIDTH);
+            editor_area = editor_area.clip_left(file_tree_width);
         }
 
         // if the terminal size suddenly changed, we need to trigger a resize
@@ -1795,7 +1602,7 @@ impl Component for EditorView {
             if cx.editor.file_tree.open {
                 Self::render_bufferline(
                     cx.editor,
-                    area.clip_left(FILE_TREE_WIDTH).with_height(1),
+                    area.clip_left(file_tree_width).with_height(1),
                     surface,
                 );
             } else {
@@ -1805,9 +1612,6 @@ impl Component for EditorView {
 
         for (view, is_focused) in cx.editor.tree.views() {
             let doc = cx.editor.document(view.doc).unwrap();
-            let is_focused =
-                !(cx.editor.file_tree.open && cx.editor.file_tree.focused) && is_focused;
-
             self.render_view(cx.editor, doc, view, area, surface, is_focused);
         }
 
@@ -1882,7 +1686,12 @@ impl Component for EditorView {
         }
 
         if cx.editor.file_tree.open {
-            self.render_file_tree(cx.editor, &cx.editor.file_tree, area, surface);
+            self.render_file_tree(
+                cx.editor,
+                &cx.editor.file_tree,
+                area.with_width(file_tree_width).clip_bottom(1),
+                surface,
+            );
         }
     }
 

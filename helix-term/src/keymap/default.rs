@@ -396,9 +396,32 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
         "home" => goto_line_start,
         "end" => goto_line_end_newline,
     });
+    let file_tree = keymap!({ "File tree"
+        "esc" | "q" => file_tree_close,
+        "ret" => file_tree_select,
+        "k" => file_tree_move_up,
+        "j" => file_tree_move_down,
+        "g" => { "Goto"
+            "g" => file_tree_goto_start,
+            "e" => file_tree_goto_end,
+        },
+        "d" => file_tree_delete,
+        "r" => file_tree_rename,
+        "n" => { "New"
+            "f" => file_tree_new_file,
+            "d" => file_tree_new_dir,
+        },
+        "y" => file_tree_yank,
+        "p" => file_tree_paste,
+        "m" => file_tree_move,
+        "/" => file_tree_search,
+        "R" => file_tree_reload,
+        "C-l" => jump_view_right,
+    });
     hashmap!(
         Mode::Normal => normal,
         Mode::Select => select,
         Mode::Insert => insert,
+        Mode::FileTree => file_tree,
     )
 }
