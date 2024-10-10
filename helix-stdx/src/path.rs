@@ -2,7 +2,9 @@ pub use etcetera::home_dir;
 
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     ffi::OsString,
+    fs::DirEntry,
     path::{Component, Path, PathBuf, MAIN_SEPARATOR_STR},
 };
 
@@ -213,6 +215,37 @@ pub fn copy_recursively(from: impl AsRef<Path>, to: impl AsRef<Path>) -> std::io
         }
     }
     Ok(())
+}
+
+pub fn read_dir_sorted(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => {
+            let mut entries = entries
+                .flatten()
+                .filter(|x| {
+                    !x.path().symlink_metadata().unwrap().is_symlink()
+                        && (show_hidden || !x.file_name().to_string_lossy().starts_with('.'))
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by(|a, b| {
+                let a = a.path();
+                let b = b.path();
+                let a_name = a.file_name().unwrap().to_string_lossy().to_lowercase();
+                let b_name = b.file_name().unwrap().to_string_lossy().to_lowercase();
+                if a.is_dir() && b.is_dir() {
+                    a_name.cmp(&b_name)
+                } else if a.is_dir() && !b.is_dir() {
+                    Ordering::Less
+                } else if !a.is_dir() && b.is_dir() {
+                    Ordering::Greater
+                } else {
+                    a_name.cmp(&b_name)
+                }
+            });
+            entries
+        }
+        Err(_) => vec![],
+    }
 }
 
 #[cfg(test)]
