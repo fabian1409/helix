@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 use std::fs::DirEntry;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use helix_stdx::path::fold_home_dir;
+use helix_stdx::path::{fold_home_dir, read_dir_sorted};
 
 pub const FILE_TREE_MAX_WIDTH: u16 = 30;
 
@@ -58,18 +58,23 @@ impl PartialOrd for FileTreeItem {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileTree {
     pub items: Vec<FileTreeItem>,
     pub selection: usize,
     pub open: bool,
-    pub focused: bool,
     pub copied: Option<FileTreeItem>,
+}
+
+impl Default for FileTree {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FileTree {
     pub fn new() -> Self {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = std::env::current_dir().expect("can get cwd");
         let dir = read_dir_sorted(&cwd, false);
         let mut items = vec![FileTreeItem {
             name: fold_home_dir(&cwd).to_string_lossy().to_string(),
@@ -83,9 +88,12 @@ impl FileTree {
             items,
             selection: 0,
             open: false,
-            focused: true,
             copied: None,
         }
+    }
+
+    pub fn selected(&self) -> Option<&FileTreeItem> {
+        self.items.get(self.selection)
     }
 
     pub fn move_up(&mut self) {
@@ -113,9 +121,9 @@ impl FileTree {
             .into_iter()
             .map(|entry| FileTreeItem::from(entry).with_depth(item.depth + 1))
             .collect::<Vec<FileTreeItem>>();
-        let len = items.len();
-        self.items.extend(items);
-        self.items[self.selection + 1..].rotate_right(len);
+        for item in items.into_iter().rev() {
+            self.items.insert(self.selection + 1, item);
+        }
     }
 
     pub fn collapse(&mut self) {
@@ -157,36 +165,5 @@ impl FileTree {
         }];
         items.extend(dir.into_iter().map(FileTreeItem::from).collect::<Vec<_>>());
         self.items = items;
-    }
-}
-
-fn read_dir_sorted(path: &Path, show_hidden: bool) -> Vec<DirEntry> {
-    match std::fs::read_dir(path) {
-        Ok(entries) => {
-            let mut entries = entries
-                .flatten()
-                .filter(|x| {
-                    !x.path().symlink_metadata().unwrap().is_symlink()
-                        && (show_hidden || !x.file_name().to_string_lossy().starts_with('.'))
-                })
-                .collect::<Vec<_>>();
-            entries.sort_by(|a, b| {
-                let a = a.path();
-                let b = b.path();
-                let a_name = a.file_name().unwrap().to_string_lossy().to_lowercase();
-                let b_name = b.file_name().unwrap().to_string_lossy().to_lowercase();
-                if a.is_dir() && b.is_dir() {
-                    a_name.cmp(&b_name)
-                } else if a.is_dir() && !b.is_dir() {
-                    Ordering::Less
-                } else if !a.is_dir() && b.is_dir() {
-                    Ordering::Greater
-                } else {
-                    a_name.cmp(&b_name)
-                }
-            });
-            entries
-        }
-        Err(_) => vec![],
     }
 }

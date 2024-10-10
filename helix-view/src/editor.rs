@@ -1975,8 +1975,8 @@ impl Editor {
     pub fn focus_direction(&mut self, direction: tree::Direction) {
         let current_view = self.tree.focus;
         if self.file_tree.open {
-            if self.file_tree.focused && matches!(direction, tree::Direction::Right) {
-                self.file_tree.focused = false;
+            if matches!(self.mode, Mode::FileTree) && matches!(direction, tree::Direction::Right) {
+                self.mode = Mode::Normal;
                 let id = self
                     .tree
                     .views()
@@ -1985,11 +1985,13 @@ impl Editor {
                     .0
                     .id;
                 self.focus(id);
-            } else if !self.file_tree.focused && matches!(direction, tree::Direction::Left) {
+            } else if !matches!(self.mode, Mode::FileTree)
+                && matches!(direction, tree::Direction::Left)
+            {
                 if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
                     self.focus(id)
                 } else {
-                    self.file_tree.focused = true;
+                    self.mode = Mode::FileTree;
                 }
             } else if let Some(id) = self.tree.find_split_in_direction(current_view, direction) {
                 self.focus(id)
