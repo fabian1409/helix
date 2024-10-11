@@ -875,9 +875,11 @@ impl EditorView {
             Style::new()
         };
         let border_style = editor.theme.get("ui.window");
-        let text_style = editor.theme.get("ui.text");
-        let dir_icon_style = editor.theme.get("keyword");
-        let dir_style = editor.theme.get("function");
+        let dir_icon_style = editor.theme.get("ui.file-tree.dir-icon");
+        let dir_text_style = editor.theme.get("ui.file-tree.dir-text");
+        let file_icon_style = editor.theme.get("ui.file-tree.file-icon");
+        let file_text_style = editor.theme.get("ui.file-tree.file-text");
+        let indent_guide = editor.theme.get("ui.file-tree.indent-guide");
 
         // render tree
         let rows = file_tree
@@ -889,7 +891,7 @@ impl EditorView {
                 if i == 0 {
                     Row::new(vec![Spans::from(vec![
                         // Span::styled(if item.is_expanded { " " } else { " " }, dir_icon_style),
-                        Span::styled(&item.name, text_style),
+                        Span::styled(&item.name, file_text_style),
                     ])])
                 } else {
                     let mut prefix = String::new();
@@ -918,18 +920,18 @@ impl EditorView {
                     }
                     if item.is_dir {
                         Row::new(vec![Spans::from(vec![
-                            Span::styled(prefix, border_style),
+                            Span::styled(prefix, indent_guide),
                             Span::styled(
                                 if item.is_expanded { " " } else { " " },
                                 dir_icon_style,
                             ),
-                            Span::styled(&item.name, dir_style),
+                            Span::styled(&item.name, dir_text_style),
                         ])])
                     } else {
                         Row::new(vec![Spans::from(vec![
-                            Span::styled(prefix, border_style),
-                            Span::styled(" ", text_style),
-                            Span::styled(&item.name, text_style),
+                            Span::styled(prefix, indent_guide),
+                            Span::styled(" ", file_icon_style),
+                            Span::styled(&item.name, file_text_style),
                         ])])
                     }
                 }
@@ -942,7 +944,6 @@ impl EditorView {
                     .borders(Borders::RIGHT)
                     .border_style(border_style),
             )
-            .style(text_style)
             .highlight_style(selection_style)
             .widths(&widths);
         table.render_table(
