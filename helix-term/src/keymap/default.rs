@@ -422,6 +422,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
         "/" => file_tree_search,
         "R" => file_tree_reload,
         "C-l" => jump_view_right,
+        ":" => command_mode,
     });
     hashmap!(
         Mode::Normal => normal,
