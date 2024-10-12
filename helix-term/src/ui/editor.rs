@@ -882,11 +882,11 @@ impl EditorView {
         let indent_guide = editor.theme.get("ui.file-tree.indent-guide");
 
         // render tree
-        let rows = file_tree
-            .items
+        let items = file_tree.flatten_with_depth();
+        let rows = items
             .iter()
             .enumerate()
-            .map(|(i, item)| {
+            .map(|(i, (item, depth))| {
                 // render first item (cwd) differently
                 if i == 0 {
                     Row::new(vec![Spans::from(vec![
@@ -896,21 +896,21 @@ impl EditorView {
                 } else {
                     let mut prefix = String::new();
                     // cwd has depth 0, only redner prefix for depth >= 1
-                    if item.is_dir && item.depth == 1 {
+                    if item.is_dir && *depth == 1 {
                         prefix += if item.is_expanded { " " } else { " " };
                     } else {
                         prefix += "  ";
                     }
-                    if item.depth > 1 {
-                        for _ in 0..item.depth - 2 {
+                    if *depth > 1 {
+                        for _ in 0..*depth - 2 {
                             prefix += VERTICAL;
                             prefix += " ";
                         }
                         if item.is_dir {
                             prefix += if item.is_expanded { " " } else { " " };
                         } else {
-                            let next = file_tree.items.get(i + 1);
-                            if next.is_some_and(|next| next.depth < item.depth) {
+                            let next = items.get(i + 1);
+                            if next.is_some_and(|next| next.1 < *depth) {
                                 prefix += BOTTOM_LEFT;
                             } else {
                                 prefix += VERTICAL;
