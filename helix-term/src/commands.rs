@@ -6815,16 +6815,17 @@ fn file_tree_close(cx: &mut Context) {
 }
 
 fn file_tree_select(cx: &mut Context) {
-    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    let item = cx.editor.file_tree.selected_mut().unwrap();
+    let path = item.path.clone();
     if item.is_dir {
         if item.is_expanded {
-            cx.editor.file_tree.collapse();
+            item.collapse();
         } else {
-            cx.editor.file_tree.expand();
+            item.expand();
         }
     } else {
         cx.editor
-            .open(&item.path, helix_view::editor::Action::Replace)
+            .open(&path, helix_view::editor::Action::Replace)
             .unwrap();
     }
 }
@@ -6857,17 +6858,17 @@ fn file_tree_delete(cx: &mut Context) {
             }
             if input.eq("y") {
                 let file_tree = &mut cx.editor.file_tree;
+                let parent = file_tree
+                    .find_with_path(item.path.parent().unwrap())
+                    .unwrap();
                 if item.is_dir {
                     if std::fs::remove_dir_all(&item.path).is_ok() {
-                        if item.is_expanded {
-                            file_tree.collapse();
-                        }
-                        file_tree.items.remove(file_tree.selection);
+                        parent.children.retain(|c| *c != item);
                     } else {
                         cx.editor.set_error("failed to rm dir");
                     }
                 } else if std::fs::remove_file(&item.path).is_ok() {
-                    file_tree.items.remove(file_tree.selection);
+                    parent.children.retain(|c| *c != item);
                 } else {
                     cx.editor.set_error("failed to rm file");
                 }
@@ -6890,14 +6891,16 @@ fn file_tree_rename(cx: &mut Context) {
             let to = item.path.with_file_name(input);
             if std::fs::rename(&item.path, &to).is_ok() {
                 let file_tree = &mut cx.editor.file_tree;
-                let mut item = file_tree.items.remove(file_tree.selection);
+                let item = file_tree.selected_mut().unwrap();
+                item.collapse();
                 item.name = input.split('/').next().unwrap().to_string();
                 item.path = to;
-                if item.is_expanded {
-                    // remove children if we rename dir, else they have invalid paths
-                    file_tree.collapse();
-                }
-                file_tree.insert_and_adjust(item);
+                let item = item.clone();
+                file_tree
+                    .find_with_path(item.path.parent().unwrap())
+                    .unwrap()
+                    .children
+                    .sort();
             } else {
                 cx.editor.set_error("rename failed");
             }
@@ -6917,19 +6920,14 @@ fn file_tree_new_file(cx: &mut Context) {
                 return;
             }
             let file_tree = &mut cx.editor.file_tree;
-            let dest = file_tree.items.get(file_tree.selection).unwrap();
+            let dest = file_tree.selected_mut().unwrap();
             if dest.is_dir {
                 let path = dest.path.join(input);
                 if std::fs::File::create(&path).is_ok() {
                     if dest.is_expanded {
-                        let item = FileTreeItem {
-                            name: input.to_string(),
-                            path,
-                            is_dir: false,
-                            is_expanded: false,
-                            depth: dest.depth + 1,
-                        };
-                        file_tree.insert_and_adjust(item);
+                        let item = FileTreeItem::new(input.to_string(), path, false);
+                        dest.children.push(item);
+                        dest.children.sort();
                     }
                 } else {
                     cx.editor.set_error("failed to create file");
@@ -6950,19 +6948,15 @@ fn file_tree_new_dir(cx: &mut Context) {
                 return;
             }
             let file_tree = &mut cx.editor.file_tree;
-            let dest = file_tree.items.get(file_tree.selection).unwrap();
+            let dest = file_tree.selected_mut().unwrap();
             if dest.is_dir {
                 let path = dest.path.join(input);
+                // TODO maybe recursive?
                 if std::fs::DirBuilder::new().create(&path).is_ok() {
                     if dest.is_expanded {
-                        let item = FileTreeItem {
-                            name: input.to_string(),
-                            path,
-                            is_dir: true,
-                            is_expanded: false,
-                            depth: dest.depth + 1,
-                        };
-                        file_tree.insert_and_adjust(item);
+                        let item = FileTreeItem::new(input.to_string(), path, true);
+                        dest.children.push(item);
+                        dest.children.sort();
                     }
                 } else {
                     cx.editor.set_error("failed to create dir");
@@ -6974,36 +6968,35 @@ fn file_tree_new_dir(cx: &mut Context) {
 }
 
 fn file_tree_yank(cx: &mut Context) {
-    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    let mut item = cx.editor.file_tree.selected().cloned().unwrap();
+    item.collapse();
     cx.editor.set_status(format!("'{}' copied", item.name));
     cx.editor.file_tree.copied = Some(item);
 }
 
 fn file_tree_paste(cx: &mut Context) {
     let file_tree = &mut cx.editor.file_tree;
-    let dest = file_tree.selected().cloned().unwrap();
-    if dest.is_dir {
-        if let Some(mut item) = file_tree.copied.clone() {
+    if let Some(mut item) = file_tree.copied.clone() {
+        let dest = file_tree.selected_mut().unwrap();
+        if dest.is_dir {
             let to = dest.path.join(&item.name);
-            item.depth = dest.depth + 1;
             if item.is_dir {
-                if copy_recursively(&item.path, to).is_ok() {
-                    if dest.is_expanded {
-                        file_tree.insert_and_adjust(item);
-                    }
-                } else {
-                    cx.editor.set_error("failed to paste dir")
+                if copy_recursively(&item.path, &to).is_err() {
+                    cx.editor.set_error("failed to paste dir");
+                    return;
                 }
-            } else if std::fs::copy(&item.path, to).is_ok() {
-                if dest.is_expanded {
-                    file_tree.insert_and_adjust(item);
-                }
-            } else {
-                cx.editor.set_error("failed to paste file")
+            } else if std::fs::copy(&item.path, &to).is_err() {
+                cx.editor.set_error("failed to paste file");
+                return;
             }
-        } else {
-            cx.editor.set_status("nothing to paste".to_string());
+            if dest.is_expanded {
+                item.path = to.clone();
+                dest.children.push(item);
+                dest.children.sort();
+            }
         }
+    } else {
+        cx.editor.set_status("nothing to paste".to_string());
     }
 }
 
@@ -7014,7 +7007,7 @@ fn file_tree_move(cx: &mut Context) {
     let prompt = Prompt::new(
         "mv:".into(),
         None,
-        completers::none,
+        completers::directory,
         move |cx, input, event| {
             if event != PromptEvent::Validate {
                 return;
@@ -7023,12 +7016,14 @@ fn file_tree_move(cx: &mut Context) {
             let input = input.replace("~", &home_dir.to_string_lossy());
             if std::fs::rename(&item.path, &input).is_ok() {
                 let file_tree = &mut cx.editor.file_tree;
-                let mut item = file_tree.items.remove(file_tree.selection);
+                let mut item = file_tree.take_selected().unwrap();
                 item.name = input.split('/').last().unwrap().to_string();
                 item.path = PathBuf::from_str(&input).expect("valid if rename was sucessful");
-                if item.is_expanded {
-                    // remove children if we rename dir, else they have invalid paths
-                    file_tree.collapse();
+                if let Some(parent) = file_tree.find_with_path(item.path.parent().unwrap()) {
+                    if parent.is_expanded {
+                        parent.children.push(item);
+                        parent.children.sort();
+                    }
                 }
             } else {
                 cx.editor.set_error("mv failed");
@@ -7046,7 +7041,7 @@ fn file_tree_search(cx: &mut Context) {
         completers::none,
         move |cx, input, _| {
             let file_tree = &mut cx.editor.file_tree;
-            let items = &file_tree.items;
+            let items = file_tree.flatten();
             let selection = items.iter().position(|item| item.name.starts_with(input));
             if let Some(selection) = selection {
                 file_tree.selection = selection;
