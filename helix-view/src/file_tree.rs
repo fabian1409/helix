@@ -2,6 +2,7 @@ use std::fs::DirEntry;
 use std::path::PathBuf;
 use std::{cmp::Ordering, path::Path};
 
+use helix_core::movement::Direction;
 use helix_stdx::path::{fold_home_dir, read_dir_sorted};
 
 pub const FILE_TREE_MAX_WIDTH: u16 = 30;
@@ -235,5 +236,31 @@ impl FileTree {
     pub fn reload(&mut self) {
         *self = Self::new();
         self.open = true;
+    }
+
+    pub fn find_char(&mut self, ch: char, direction: Direction) {
+        match direction {
+            Direction::Forward => {
+                if let Some(offset) = self
+                    .flatten()
+                    .iter()
+                    .skip(self.selection + 1)
+                    .position(|e| e.name.starts_with(ch))
+                {
+                    self.selection += offset + 1
+                }
+            }
+            Direction::Backward => {
+                if let Some(offset) = self
+                    .flatten()
+                    .iter()
+                    .take(self.selection)
+                    .rev()
+                    .position(|e| e.name.starts_with(ch))
+                {
+                    self.selection = self.selection.saturating_sub(offset + 1)
+                }
+            }
+        }
     }
 }
