@@ -401,10 +401,16 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
         "ret" => file_tree_select,
         "k" => file_tree_move_up,
         "j" => file_tree_move_down,
+        "s" => { "Split"
+            "v" => file_tree_open_vsplit,
+            "h" => file_tree_open_hsplit,
+        },
         "g" => { "Goto"
             "g" => file_tree_goto_start,
             "e" => file_tree_goto_end,
         },
+        "f" => file_tree_find_next_char,
+        "F" => file_tree_find_prev_char,
         "d" => file_tree_delete,
         "r" => file_tree_rename,
         "n" => { "New"
