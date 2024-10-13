@@ -571,7 +571,9 @@ impl MappableCommand {
         extend_to_word, "Extend to a two-character label",
         file_tree, "Open file tree",
         file_tree_close, "Close file tree",
-        file_tree_select, "Select file tree item",
+        file_tree_select, "Expand/collapse/open file tree item",
+        file_tree_open_vsplit, "Open the selected file or directory (vsplit)",
+        file_tree_open_hsplit, "Open the selected file or directory (hsplit)",
         file_tree_move_up, "Move up",
         file_tree_move_down, "Move down",
         file_tree_goto_start, "Goto start",
@@ -585,6 +587,8 @@ impl MappableCommand {
         file_tree_move, "Move selected item",
         file_tree_search, "Search for item",
         file_tree_reload, "Reload file tree",
+        file_tree_find_next_char, "Move to next item starting with char",
+        file_tree_find_prev_char, "Move to prev item starting with char",
     );
 }
 
@@ -6338,18 +6342,30 @@ fn file_tree_select(cx: &mut Context) {
             item.expand();
         }
     } else {
-        cx.editor
-            .open(&path, helix_view::editor::Action::Replace)
-            .unwrap();
+        cx.editor.open(&path, Action::Replace).unwrap();
     }
 }
 
+fn file_tree_open_vsplit(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    cx.editor.open(&item.path, Action::VerticalSplit).unwrap();
+}
+
+fn file_tree_open_hsplit(cx: &mut Context) {
+    let item = cx.editor.file_tree.selected().cloned().unwrap();
+    cx.editor.open(&item.path, Action::HorizontalSplit).unwrap();
+}
+
 fn file_tree_move_up(cx: &mut Context) {
-    cx.editor.file_tree.move_up()
+    for _ in 0..cx.count() {
+        cx.editor.file_tree.move_up()
+    }
 }
 
 fn file_tree_move_down(cx: &mut Context) {
-    cx.editor.file_tree.move_down()
+    for _ in 0..cx.count() {
+        cx.editor.file_tree.move_down()
+    }
 }
 
 fn file_tree_goto_start(cx: &mut Context) {
@@ -6567,4 +6583,24 @@ fn file_tree_search(cx: &mut Context) {
 
 fn file_tree_reload(cx: &mut Context) {
     cx.editor.file_tree.reload()
+}
+
+fn file_tree_find_char(cx: &mut Context, direction: Direction) {
+    cx.on_next_key(move |cx, event| {
+        if let KeyEvent {
+            code: KeyCode::Char(ch),
+            ..
+        } = event
+        {
+            cx.editor.file_tree.find_char(ch, direction)
+        }
+    })
+}
+
+fn file_tree_find_next_char(cx: &mut Context) {
+    file_tree_find_char(cx, Direction::Forward)
+}
+
+fn file_tree_find_prev_char(cx: &mut Context) {
+    file_tree_find_char(cx, Direction::Backward)
 }
