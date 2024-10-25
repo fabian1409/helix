@@ -216,7 +216,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
 
         "C-i" | "tab" => jump_forward, // tab == <C-i>
         "C-o" => jump_backward,
-        "C-s" => save_selection,
+        "C-s" => buffer_snipe,
 
         "space" => { "Space"
             "f" => file_picker,

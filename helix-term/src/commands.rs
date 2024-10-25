@@ -45,6 +45,7 @@ use helix_view::{
     info::Info,
     input::KeyEvent,
     keyboard::KeyCode,
+    snipe::Snipe,
     theme::Style,
     tree,
     view::View,
@@ -66,7 +67,7 @@ use crate::{
 use crate::job::{self, Jobs};
 use std::{
     cmp::Ordering,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     error::Error,
     fmt,
     future::Future,
@@ -589,6 +590,7 @@ impl MappableCommand {
         file_tree_reload, "Reload file tree",
         file_tree_find_next_char, "Move to next item starting with char",
         file_tree_find_prev_char, "Move to prev item starting with char",
+        buffer_snipe, "Snipe",
     );
 }
 
@@ -3036,6 +3038,46 @@ fn buffer_picker(cx: &mut Context) {
         Some((meta.id.into(), Some((line, line))))
     });
     cx.push_layer(Box::new(overlaid(picker)));
+}
+
+fn buffer_snipe(cx: &mut Context) {
+    struct BufferMeta {
+        id: DocumentId,
+        name: String,
+    }
+
+    let new_meta = |doc: &Document| BufferMeta {
+        id: doc.id(),
+        name: doc.display_name().to_string(),
+    };
+
+    let items = cx
+        .editor
+        .documents
+        .values()
+        .map(new_meta)
+        .collect::<Vec<BufferMeta>>();
+
+    let alphabet = &cx.editor.config().jump_label_alphabet;
+    let mut snipe_map = BTreeMap::new();
+    for (i, item) in items.into_iter().enumerate() {
+        snipe_map.insert(alphabet.get(i).cloned().unwrap(), item);
+    }
+    cx.editor.snipe = Some(Snipe::new(
+        "Snipe",
+        &snipe_map
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.name.clone()))
+            .collect::<Vec<_>>(),
+    ));
+    cx.on_next_key(move |cx, event| {
+        cx.editor.snipe = None;
+        if let Some(ch) = event.char() {
+            if let Some(item) = snipe_map.get(&ch) {
+                cx.editor.switch(item.id, Action::Replace);
+            }
+        }
+    })
 }
 
 fn jumplist_picker(cx: &mut Context) {

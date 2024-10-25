@@ -9,6 +9,7 @@ pub mod overlay;
 pub mod picker;
 pub mod popup;
 mod prompt;
+mod snipe;
 mod spinner;
 mod statusline;
 mod text;

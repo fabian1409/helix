@@ -9,6 +9,7 @@ use crate::{
     info::Info,
     input::KeyEvent,
     register::Registers,
+    snipe::Snipe,
     theme::{self, Theme},
     tree::{self, Tree},
     Document, DocumentId, View, ViewId,
@@ -1054,6 +1055,8 @@ pub struct Editor {
     pub status_msg: Option<(Cow<'static, str>, Severity)>,
     pub autoinfo: Option<Info>,
 
+    pub snipe: Option<Snipe>,
+
     pub file_tree: FileTree,
 
     pub config: Arc<dyn DynAccess<Config>>,
@@ -1189,6 +1192,7 @@ impl Editor {
             registers: Registers::default(),
             status_msg: None,
             autoinfo: None,
+            snipe: None,
             file_tree: FileTree::new(),
             idle_timer: Box::pin(sleep(conf.idle_timeout)),
             redraw_timer: Box::pin(sleep(Duration::MAX)),

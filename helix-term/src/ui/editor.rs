@@ -1623,6 +1623,11 @@ impl Component for EditorView {
             }
         }
 
+        if let Some(mut snipe) = cx.editor.snipe.take() {
+            snipe.render(area, surface, cx);
+            cx.editor.snipe = Some(snipe)
+        }
+
         let key_width = 15u16; // for showing pending keys
         let mut status_msg_width = 0;
 
