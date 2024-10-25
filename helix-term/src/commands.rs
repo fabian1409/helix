@@ -6,7 +6,7 @@ pub use dap::*;
 use futures_util::FutureExt;
 use helix_event::status;
 use helix_stdx::{
-    path::{copy_recursively, expand_tilde, find_paths, fold_home_dir, home_dir},
+    path::{self, copy_recursively, find_paths, fold_home_dir, home_dir},
     rope::{self, RopeSliceExt},
 };
 use helix_vcs::{FileChange, Hunk};
@@ -6826,6 +6826,9 @@ fn file_tree_paste(cx: &mut Context) {
     if let Some(mut item) = file_tree.copied.clone() {
         let dest = file_tree.selected_mut().unwrap();
         if dest.is_dir {
+            if Path::exists(&dest.path.join(&item.name)) {
+                item.name += ".copy";
+            }
             let to = dest.path.join(&item.name);
             if item.is_dir {
                 if copy_recursively(&item.path, &to).is_err() {
