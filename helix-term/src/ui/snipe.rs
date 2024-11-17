@@ -14,8 +14,8 @@ impl Component for Snipe {
         // Calculate the area of the terminal to modify. Because we want to
         // render at the bottom right, we use the viewport's width and height
         // which evaluate to the most bottom right coordinate.
-        let width = u16::max(self.width + 2 + 2, 60); // +2 for border, +2 for margin
-        let height = u16::max(self.height + 2, 15); // +2 for border
+        let width = u16::max(self.width + 2 + 2, (viewport.width as f64 * 0.4f64) as u16); // +2 for border, +2 for margin
+        let height = u16::max(self.height + 2, (viewport.height as f64 * 0.4f64) as u16); // +2 for border
         let area = viewport.intersection(Rect::new(
             (viewport.width / 2).saturating_sub(width / 2),
             (viewport.height / 2).saturating_sub((height + 2) / 2), // +2 for statusline
