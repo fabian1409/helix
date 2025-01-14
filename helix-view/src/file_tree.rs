@@ -5,7 +5,7 @@ use std::{cmp::Ordering, path::Path};
 use helix_core::movement::Direction;
 use helix_stdx::path::{fold_home_dir, read_dir_sorted};
 
-pub const FILE_TREE_MAX_WIDTH: u16 = 30;
+pub const FILE_TREE_MAX_WIDTH: u16 = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileTreeItem {

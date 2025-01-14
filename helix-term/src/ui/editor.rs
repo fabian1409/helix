@@ -1652,7 +1652,7 @@ impl Component for EditorView {
 
         // -1 for commandline and -1 for bufferline
         let mut editor_area = area.clip_bottom(1);
-        let file_tree_width = u16::max(FILE_TREE_MAX_WIDTH, (20 * editor_area.width) / 100);
+        let file_tree_width = u16::min(FILE_TREE_MAX_WIDTH, (20 * editor_area.width) / 100);
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
