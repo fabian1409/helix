@@ -238,7 +238,9 @@ impl EditorView {
         let mut context =
             statusline::RenderContext::new(editor, doc, view, is_focused, &self.spinners);
 
-        statusline::render(&mut context, statusline_area, surface);
+        if editor.status_msg.is_none() {
+            statusline::render(&mut context, statusline_area, surface)
+        }
     }
 
     pub fn render_rulers(
@@ -1545,7 +1547,7 @@ impl Component for EditorView {
         };
 
         // -1 for commandline and -1 for bufferline
-        let mut editor_area = area.clip_bottom(1);
+        let mut editor_area = area;
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
