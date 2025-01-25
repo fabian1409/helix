@@ -1681,6 +1681,15 @@ impl Component for EditorView {
             }
         }
 
+        if cx.editor.file_tree.open {
+            self.render_file_tree(
+                cx.editor,
+                &cx.editor.file_tree,
+                area.with_width(file_tree_width).clip_bottom(1),
+                surface,
+            );
+        }
+
         let key_width = 15u16; // for showing pending keys
         let mut status_msg_width = 0;
 
@@ -1742,15 +1751,6 @@ impl Component for EditorView {
 
         if let Some(completion) = self.completion.as_mut() {
             completion.render(area, surface, cx);
-        }
-
-        if cx.editor.file_tree.open {
-            self.render_file_tree(
-                cx.editor,
-                &cx.editor.file_tree,
-                area.with_width(file_tree_width).clip_bottom(1),
-                surface,
-            );
         }
     }
 
