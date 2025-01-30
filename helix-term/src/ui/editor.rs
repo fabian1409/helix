@@ -25,7 +25,7 @@ use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SCRATCH_BUFFER_NAME},
     editor::{CompleteAction, CursorShapeConfig},
-    file_tree::{FileTree, FILE_TREE_MAX_WIDTH},
+    file_tree::{FileTree, FILE_TREE_WIDTH},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
@@ -1652,12 +1652,11 @@ impl Component for EditorView {
 
         // -1 for commandline and -1 for bufferline
         let mut editor_area = area.clip_bottom(1);
-        let file_tree_width = u16::min(FILE_TREE_MAX_WIDTH, (20 * editor_area.width) / 100);
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
         if cx.editor.file_tree.open {
-            editor_area = editor_area.clip_left(file_tree_width);
+            editor_area = editor_area.clip_left(FILE_TREE_WIDTH);
         }
 
         // if the terminal size suddenly changed, we need to trigger a resize
@@ -1668,7 +1667,7 @@ impl Component for EditorView {
             if cx.editor.file_tree.open {
                 Self::render_bufferline(
                     cx.editor,
-                    area.clip_left(file_tree_width).with_height(1),
+                    area.clip_left(FILE_TREE_WIDTH).with_height(1),
                     surface,
                 );
             } else {
@@ -1692,7 +1691,7 @@ impl Component for EditorView {
             self.render_file_tree(
                 cx.editor,
                 &cx.editor.file_tree,
-                area.with_width(file_tree_width).clip_bottom(1),
+                area.with_width(FILE_TREE_WIDTH).clip_bottom(1),
                 surface,
             );
         }
