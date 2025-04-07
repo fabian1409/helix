@@ -81,6 +81,12 @@ tabstop = { modifiers = ["italic"], bg = "bossanova" }
 "ui.menu.selected" = { fg = "revolver", bg = "white" }
 "ui.menu.scroll" = { fg = "lavender", bg = "comet" }
 
+"ui.file-tree.dir-text" = { fg = "white" }
+"ui.file-tree.dir-icon" = { fg = "lavender" }
+"ui.file-tree.file-text" = { fg = "white" }
+"ui.file-tree.file-icon" = { fg = "white" }
+"ui.file-tree.indent-guide" = { fg = "comet" }
+
 "diagnostic.hint" = { underline = { color = "silver", style = "curl" } }
 "diagnostic.info" = { underline = { color = "delta", style = "curl" } }
 "diagnostic.warning" = { underline = { color = "lightning", style = "curl" } }
