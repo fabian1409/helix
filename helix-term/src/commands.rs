@@ -1286,9 +1286,7 @@ fn extend_to_file_start(cx: &mut Context) {
 }
 
 fn goto_file_start_impl(cx: &mut Context, movement: Movement) {
-    if cx.editor.file_tree.open {
-        cx.editor.file_tree.goto_start();
-    } else if cx.count.is_some() {
+    if cx.count.is_some() {
         goto_line_impl(cx, movement);
     } else {
         let (view, doc) = current!(cx.editor);
