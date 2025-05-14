@@ -297,7 +297,7 @@ where
         return;
     }
 
-    write(context, " W ".into(), None);
+    write(context, " W ".into());
 
     for sev in sevs_to_show {
         match sev {
@@ -336,11 +336,7 @@ where
     let count = selection.len();
     write(
         context,
-        if count == 1 {
-            " 1 sel ".into()
-        } else {
-            format!(" {}/{count} sels ", selection.primary_index() + 1).into()
-        },
+        format!(" {} sel{} ", count, if count == 1 { "" } else { "s" }).into(),
     );
 }
 
