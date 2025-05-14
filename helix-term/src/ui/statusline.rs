@@ -297,7 +297,7 @@ where
         return;
     }
 
-    write(context, " W ".into());
+    write(context, " W ".into(), None);
 
     for sev in sevs_to_show {
         match sev {
