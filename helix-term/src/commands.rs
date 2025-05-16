@@ -538,6 +538,10 @@ impl MappableCommand {
         jump_view_left, "Jump to left split",
         jump_view_up, "Jump to split above",
         jump_view_down, "Jump to split below",
+        jump_view_right_tmux, "Jump to right split or tmux pane",
+        jump_view_left_tmux, "Jump to left split or tmux pane",
+        jump_view_up_tmux, "Jump to split above or tmux pane",
+        jump_view_down_tmux, "Jump to split below or tmux pane",
         swap_view_right, "Swap with right split",
         swap_view_left, "Swap with left split",
         swap_view_up, "Swap with split above",
@@ -6991,4 +6995,43 @@ fn lsp_or_syntax_workspace_symbol_picker(cx: &mut Context) {
     } else {
         syntax_workspace_symbol_picker(cx);
     }
+}
+
+fn jump_view_with_tmux(cx: &mut Context, direction: tree::Direction) {
+    let current_view = cx.editor.tree.focus;
+    if let Some(id) = cx
+        .editor
+        .tree
+        .find_split_in_direction(current_view, direction)
+    {
+        cx.editor.focus(id)
+    } else {
+        let shell = cx.editor.config().shell.clone();
+        let cmd = match direction {
+            tree::Direction::Right => "tmux if -F '#{pane_at_right}' '' 'select-pane -R'",
+            tree::Direction::Left => "tmux if -F '#{pane_at_left}' '' 'select-pane -L'",
+            tree::Direction::Up => "tmux if -F '#{pane_at_top}' '' 'select-pane -U'",
+            tree::Direction::Down => "tmux if -F '#{pane_at_bottom}' '' 'select-pane -D'",
+        };
+
+        if let Err(err) = shell_impl(&shell, cmd, None) {
+            log::debug!("Shell command failed: {}", err);
+        }
+    }
+}
+
+pub fn jump_view_right_tmux(cx: &mut Context) {
+    jump_view_with_tmux(cx, tree::Direction::Right)
+}
+
+pub fn jump_view_left_tmux(cx: &mut Context) {
+    jump_view_with_tmux(cx, tree::Direction::Left)
+}
+
+pub fn jump_view_up_tmux(cx: &mut Context) {
+    jump_view_with_tmux(cx, tree::Direction::Up)
+}
+
+pub fn jump_view_down_tmux(cx: &mut Context) {
+    jump_view_with_tmux(cx, tree::Direction::Down)
 }
