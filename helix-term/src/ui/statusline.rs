@@ -50,7 +50,7 @@ pub struct RenderBuffer<'a> {
 }
 
 pub fn render(context: &mut RenderContext, viewport: Rect, surface: &mut Surface) {
-    let base_style = if context.focused {
+    let base_style = if context.focused && context.editor.mode != Mode::FileTree {
         context.editor.theme.get("ui.statusline")
     } else {
         context.editor.theme.get("ui.statusline.inactive")
