@@ -86,12 +86,13 @@ impl EditorView {
         view: &View,
         viewport: Rect,
         surface: &mut Surface,
-        is_focused: bool,
+        mut is_focused: bool,
     ) {
         let inner = view.inner_area(doc);
         let area = view.area;
         let theme = &editor.theme;
         let config = editor.config();
+        is_focused &= editor.mode != Mode::FileTree;
 
         let view_offset = doc.view_offset(view.id);
 
