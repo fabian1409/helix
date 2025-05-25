@@ -2304,6 +2304,34 @@ fn pipe(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow:
     pipe_impl(cx, args, event, &ShellBehavior::Replace)
 }
 
+fn copilot(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let prompt = args.first().unwrap();
+
+    let doc_id = view!(cx.editor).doc;
+    // TODO could also work with lsp here?
+    // cx.editor.documents.get(&doc_id).unwrap().language_servers().find(|lsp| lsp.name() == "copilot").unwrap();
+    if let Some(path) = cx.editor.documents.get(&doc_id).unwrap().path() {
+        let file = path.to_str().unwrap();
+        shell(
+            cx,
+            &format!("copilot-ls prompt --file {file} --prompt \"{prompt}\""),
+            &ShellBehavior::Replace,
+        );
+    } else {
+        shell(
+            cx,
+            &format!("copilot-ls prompt --prompt \"{prompt}\""),
+            &ShellBehavior::Replace,
+        );
+    }
+
+    Ok(())
+}
+
 fn pipe_impl(
     cx: &mut compositor::Context,
     args: Args,
@@ -3564,6 +3592,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         completer: CommandCompleter::none(),
         signature: Signature {
             positionals: (0, None),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "copilot",
+        aliases: &[],
+        doc: "Prompt copilot with current file and selection",
+        fun: copilot,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (1, Some(1)),
             ..Signature::DEFAULT
         },
     },
