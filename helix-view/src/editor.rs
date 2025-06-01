@@ -433,6 +433,8 @@ pub struct Config {
     pub kitty_keyboard_protocol: KittyKeyboardProtocolConfig,
     pub auto_reload: AutoReloadConfig,
     pub file_watcher: file_watcher::Config,
+    /// A map of command aliases to a list of builtin commands. Arguments passed to a alias are passed to last command in the list.
+    pub aliases: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
@@ -1143,6 +1145,7 @@ impl Default for Config {
             kitty_keyboard_protocol: Default::default(),
             file_watcher: file_watcher::Config::default(),
             auto_reload: AutoReloadConfig::default(),
+            aliases: HashMap::new(),
         }
     }
 }
