@@ -373,6 +373,8 @@ pub struct Config {
     /// Whether to read settings from [EditorConfig](https://editorconfig.org) files. Defaults to
     /// `true`.
     pub editor_config: bool,
+    /// A map of command aliases to a list of builtin commands. Arguments passed to a alias are passed to last command in the list.
+    pub aliases: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1024,6 +1026,7 @@ impl Default for Config {
             end_of_line_diagnostics: DiagnosticFilter::Disable,
             clipboard_provider: ClipboardProvider::default(),
             editor_config: true,
+            aliases: HashMap::new(),
         }
     }
 }
