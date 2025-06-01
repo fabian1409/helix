@@ -3812,6 +3812,17 @@ fn execute_command_line(
         return Ok(());
     }
 
+    if let Some(alias) = cx.editor.config().aliases.get(command) {
+        for (i, mut cmd) in alias.iter().cloned().enumerate() {
+            // pass rest to last cmd
+            if i == alias.len() - 1 {
+                cmd = format!("{} {}", cmd, rest);
+            };
+            execute_command_line(cx, &cmd, event)?;
+        }
+        return Ok(());
+    }
+
     // If command is numeric, interpret as line number and go there.
     if command.parse::<usize>().is_ok() && rest.trim().is_empty() {
         let cmd = TYPABLE_COMMAND_MAP.get("goto").unwrap();
@@ -3941,7 +3952,10 @@ fn complete_command_line(editor: &Editor, input: &str) -> Vec<ui::prompt::Comple
     if complete_command {
         fuzzy_match(
             input,
-            TYPABLE_COMMAND_LIST.iter().map(|command| command.name),
+            TYPABLE_COMMAND_LIST
+                .iter()
+                .map(|command| command.name.to_string())
+                .chain(editor.config().aliases.keys().cloned()),
             false,
         )
         .into_iter()
