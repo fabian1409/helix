@@ -6908,6 +6908,11 @@ fn jump_view_with_tmux(cx: &mut Context, direction: tree::Direction) {
         .find_split_in_direction(current_view, direction)
     {
         cx.editor.focus(id)
+    } else if cx.editor.mode != Mode::FileTree
+        && cx.editor.file_tree.open
+        && matches!(direction, tree::Direction::Left)
+    {
+        cx.editor.mode = Mode::FileTree;
     } else {
         let shell = cx.editor.config().shell.clone();
         let cmd = match direction {
