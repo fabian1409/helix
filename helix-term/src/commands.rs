@@ -6956,10 +6956,10 @@ fn jump_view_with_tmux(cx: &mut Context, direction: tree::Direction) {
     } else {
         let shell = cx.editor.config().shell.clone();
         let cmd = match direction {
-            tree::Direction::Right => "tmux select-pane -R",
-            tree::Direction::Left => "tmux select-pane -L",
-            tree::Direction::Up => "tmux select-pane -U",
-            tree::Direction::Down => "tmux select-pane -D",
+            tree::Direction::Right => "tmux if -F '#{pane_at_right}' '' 'select-pane -R'",
+            tree::Direction::Left => "tmux if -F '#{pane_at_left}' '' 'select-pane -L'",
+            tree::Direction::Up => "tmux if -F '#{pane_at_top}' '' 'select-pane -U'",
+            tree::Direction::Down => "tmux if -F '#{pane_at_bottom}' '' 'select-pane -D'",
         };
 
         if let Err(err) = shell_impl(&shell, cmd, None) {
