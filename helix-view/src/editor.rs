@@ -1,6 +1,7 @@
 use crate::{
     annotations::diagnostics::{DiagnosticFilter, InlineDiagnosticsConfig},
     clipboard::ClipboardProvider,
+    commands::custom::CustomTypeableCommands,
     document::{
         DocumentOpenError, DocumentSavedEventFuture, DocumentSavedEventResult, Mode, SavePoint,
     },
@@ -442,6 +443,9 @@ pub struct Config {
     pub buffer_picker: BufferPickerConfig,
     pub auto_reload: AutoReloadConfig,
     pub file_watcher: file_watcher::Config,
+    /// Custom typable commands
+    #[serde(skip)]
+    pub commands: CustomTypeableCommands,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
@@ -1203,6 +1207,7 @@ impl Default for Config {
             buffer_picker: BufferPickerConfig::default(),
             file_watcher: file_watcher::Config::default(),
             auto_reload: AutoReloadConfig::default(),
+            commands: CustomTypeableCommands::default(),
         }
     }
 }
