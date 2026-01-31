@@ -194,7 +194,8 @@ To set up Helix:</p>
 <ul>
 <li><a href="package-managers.html#linux">Linux</a>
 <ul>
-<li><a href="package-managers.html#ubuntudebian">Ubuntu/Debian</a></li>
+<li><a href="package-managers.html#debian">Debian</a></li>
+<li><a href="package-managers.html#ubuntumint">Ubuntu/Mint</a></li>
 <li><a href="package-managers.html#fedorarhel">Fedora/RHEL</a></li>
 <li><a href="package-managers.html#arch-linux-extra">Arch Linux extra</a></li>
 <li><a href="package-managers.html#nixos">NixOS</a></li>
@@ -221,7 +222,12 @@ To set up Helix:</p>
 <p><a href="https://repology.org/project/helix-editor/versions"><img src="https://repology.org/badge/vertical-allrepos/helix-editor.svg" alt="Packaging status" /></a></p>
 <h2 id="linux"><a class="header" href="#linux">Linux</a></h2>
 <p>The following third party repositories are available:</p>
-<h3 id="ubuntudebian"><a class="header" href="#ubuntudebian">Ubuntu/Debian</a></h3>
+<h3 id="debian"><a class="header" href="#debian">Debian</a></h3>
+<pre><code class="language-sh">sudo apt install hx
+</code></pre>
+<p>If you are running a system older than Debian 13, follow the steps for
+<a href="package-managers.html#ubuntumint">Ubuntu/Mint</a>.</p>
+<h3 id="ubuntumint"><a class="header" href="#ubuntumint">Ubuntu/Mint</a></h3>
 <p>Install the Debian package <a href="https://github.com/helix-editor/helix/releases/latest">from the release page</a>.</p>
 <p>If you are running a system older than Ubuntu 22.04, Mint 21, or Debian 12, you can build the <code>.deb</code> file locally
 <a href="./building-from-source.html#building-the-debian-package">from source</a>.</p>
@@ -1666,7 +1672,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>adl</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>agda</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>alloy</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>amber</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>amber-lsp</code></td></tr>
+<tr><td>amber</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>amber-lsp</code></td></tr>
 <tr><td>astro</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>astro-ls</code></td></tr>
 <tr><td>awk</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>awk-language-server</code></td></tr>
 <tr><td>bash</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>bash-language-server</code></td></tr>
@@ -1680,12 +1686,14 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>blueprint</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>blueprint-compiler</code></td></tr>
 <tr><td>bovex</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>c</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>clangd</code></td></tr>
-<tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code></td></tr>
+<tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code>, <code>csharp-ls</code></td></tr>
+<tr><td>c3</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>c3-lsp</code></td></tr>
 <tr><td>cabal</td><td></td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>caddyfile</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>cairo</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>cairo-language-server</code></td></tr>
 <tr><td>capnp</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>cel</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>chuck</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>circom</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>circom-lsp</code></td></tr>
 <tr><td>clarity</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>clarinet</code></td></tr>
 <tr><td>clojure</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>clojure-lsp</code></td></tr>
@@ -1752,11 +1760,12 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>git-ignore</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-notes</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-rebase</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>github-action</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>actions-languageserver</code>, <code>yaml-language-server</code></td></tr>
 <tr><td>gitlab-ci</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>yaml-language-server</code>, <code>gitlab-ci-ls</code></td></tr>
 <tr><td>gjs</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>typescript-language-server</code>, <code>vscode-eslint-language-server</code>, <code>ember-language-server</code></td></tr>
 <tr><td>gleam</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td><code>gleam</code></td></tr>
 <tr><td>glimmer</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>ember-language-server</code></td></tr>
-<tr><td>glsl</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>glsl_analyzer</code></td></tr>
+<tr><td>glsl</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>glsl_analyzer</code>, <code>glsld</code></td></tr>
 <tr><td>gn</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>go</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>gopls</code>, <code>golangci-lint-langserver</code></td></tr>
 <tr><td>go-format-string</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
@@ -1769,7 +1778,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>gren</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>groovy</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>gts</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>typescript-language-server</code>, <code>vscode-eslint-language-server</code>, <code>ember-language-server</code></td></tr>
-<tr><td>hare</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>hare</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>hare-lsp</code></td></tr>
 <tr><td>haskell</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>haskell-literate</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>haskell-persistent</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1812,6 +1821,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>kcl</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>kcl-language-server</code></td></tr>
 <tr><td>kconfig</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>kdl</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+<tr><td>klog</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>koka</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>koka</code></td></tr>
 <tr><td>kotlin</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>kotlin-language-server</code></td></tr>
 <tr><td>koto</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>koto-ls</code></td></tr>
@@ -1820,12 +1830,14 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>ldif</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>lean</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>lake</code></td></tr>
 <tr><td>ledger</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>less</td><td>✓</td><td></td><td>✓</td><td></td><td>✓</td><td><code>vscode-css-language-server</code></td></tr>
 <tr><td>llvm</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>llvm-mir</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>llvm-mir-yaml</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>log</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>lpf</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>lua</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>lua-language-server</code></td></tr>
+<tr><td>lua-format-string</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>luap</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>luau</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>luau-lsp</code></td></tr>
 <tr><td>mail</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
@@ -1849,7 +1861,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>nls</code></td></tr>
 <tr><td>nim</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>nimlangserver</code></td></tr>
 <tr><td>nix</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>nil</code>, <code>nixd</code></td></tr>
-<tr><td>nu</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>nu</code></td></tr>
+<tr><td>nu</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>nu</code>, <code>nu-lint</code></td></tr>
 <tr><td>nunjucks</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>ocaml</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>ocamllsp</code></td></tr>
 <tr><td>ocaml-interface</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>ocamllsp</code></td></tr>
@@ -1861,10 +1873,12 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>pascal</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>pasls</code></td></tr>
 <tr><td>passwd</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>pem</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>penrose</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>perl</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>perlnavigator</code></td></tr>
 <tr><td>pest</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>pest-language-server</code></td></tr>
 <tr><td>php</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>intelephense</code></td></tr>
 <tr><td>php-only</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
+<tr><td>picat</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>pip-requirements</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>pkgbuild</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>termux-language-server</code>, <code>bash-language-server</code></td></tr>
 <tr><td>pkl</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>pkl-lsp</code></td></tr>
@@ -1881,6 +1895,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>purescript</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>purescript-language-server</code></td></tr>
 <tr><td>python</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>ty</code>, <code>ruff</code>, <code>jedi-language-server</code>, <code>pylsp</code></td></tr>
 <tr><td>qml</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>qmlls</code></td></tr>
+<tr><td>qmv</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>quarto</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>quint</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>quint-language-server</code></td></tr>
 <tr><td>r</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>R</code></td></tr>
@@ -1888,13 +1903,14 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>regex</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>rego</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>regols</code></td></tr>
 <tr><td>rescript</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>rescript-language-server</code></td></tr>
+<tr><td>ripple</td><td>✓</td><td></td><td></td><td>✓</td><td>✓</td><td><code>ripple-language-server</code></td></tr>
 <tr><td>rmarkdown</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>R</code></td></tr>
-<tr><td>robot</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>robotframework_ls</code></td></tr>
+<tr><td>robot</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>robotcode</code>, <code>robotframework_ls</code></td></tr>
 <tr><td>robots.txt</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td></td></tr>
 <tr><td>ron</td><td>✓</td><td></td><td>✓</td><td>✓</td><td>✓</td><td><code>ron-lsp</code></td></tr>
 <tr><td>rpmspec</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>rshtml</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>rshtml-analyzer</code>, <code>vscode-html-language-server</code>, <code>superhtml</code></td></tr>
-<tr><td>rst</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>rst</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
 <tr><td>ruby</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>ruby-lsp</code>, <code>solargraph</code></td></tr>
 <tr><td>rust</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>rust-analyzer</code></td></tr>
 <tr><td>rust-format-args</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1902,19 +1918,19 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>sage</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>scala</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>metals</code></td></tr>
 <tr><td>scfg</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>scheme</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td></tr>
+<tr><td>scheme</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>scss</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td><code>vscode-css-language-server</code></td></tr>
 <tr><td>shellcheckrc</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>slang</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>slangd</code></td></tr>
 <tr><td>slint</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>slint-lsp</code></td></tr>
 <tr><td>slisp</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
-<tr><td>smali</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>smali</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>smalisp</code></td></tr>
 <tr><td>smithy</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>cs</code></td></tr>
 <tr><td>sml</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>snakemake</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>pylsp</code></td></tr>
 <tr><td>solidity</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>solc</code></td></tr>
 <tr><td>sourcepawn</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>sourcepawn-studio</code></td></tr>
-<tr><td>spade</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>spade-language-server</code></td></tr>
+<tr><td>spade</td><td>✓</td><td></td><td>✓</td><td></td><td>✓</td><td><code>spade-language-server</code></td></tr>
 <tr><td>spicedb</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
 <tr><td>sql</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>sshclientconfig</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1926,7 +1942,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>sway</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>forc</code></td></tr>
 <tr><td>swift</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>sourcekit-lsp</code></td></tr>
 <tr><td>systemd</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>systemd-lsp</code></td></tr>
-<tr><td>systemverilog</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>systemverilog</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>svlangserver</code>, <code>verible-verilog-ls</code></td></tr>
 <tr><td>t32</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>tablegen</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>tact</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1953,7 +1969,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>v</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>v-analyzer</code></td></tr>
 <tr><td>vala</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>vala-language-server</code></td></tr>
 <tr><td>vento</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>verilog</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>svlangserver</code></td></tr>
+<tr><td>verilog</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>verible-verilog-ls</code></td></tr>
 <tr><td>vhdl</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>vhdl_ls</code></td></tr>
 <tr><td>vhs</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>vim</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1966,6 +1982,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>wgsl</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>wgsl-analyzer</code></td></tr>
 <tr><td>wikitext</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>wikitext-lsp</code></td></tr>
 <tr><td>wit</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>woodpecker-ci</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>yaml-language-server</code></td></tr>
 <tr><td>wren</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>xit</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>xml</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td></tr>
@@ -1978,13 +1995,148 @@ Languages</a> guide for more language configuration information.</p>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="ecosystem"><a class="header" href="#ecosystem">Ecosystem</a></h1>
 <p>This section has information related to the wider Helix ecosystem.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="migrating-from-vim"><a class="header" href="#migrating-from-vim">Migrating from Vim</a></h1>
+<ul>
+<li><a href="from-vim.html#Delete/Change%20Commands">Delete/Change Commands</a></li>
+<li><a href="from-vim.html#Navigation">Navigation</a></li>
+<li><a href="from-vim.html#Line%20Deletes">Line Deletes</a></li>
+<li><a href="from-vim.html#Comment%20lines,%20Completion,%20Search">Comment lines, Completion, Search</a></li>
+<li><a href="from-vim.html#File%20actions">File actions</a></li>
+</ul>
 <p>Helix's editing model is strongly inspired from Vim and Kakoune, and a notable
 difference from Vim (and the most striking similarity to Kakoune) is that Helix
 follows the <code>selection → action</code> model. This means that whatever you are
 going to act on (a word, a paragraph, a line, etc.) is selected first and the
 action itself (delete, change, yank, etc.) comes second. A cursor is simply a
 single width selection.</p>
-<p>See also Kakoune's <a href="https://github.com/mawww/kakoune/wiki/Migrating-from-Vim">Migrating from Vim</a> and Helix's <a href="https://github.com/helix-editor/helix/wiki/Migrating-from-Vim">Migrating from Vim</a>.</p>
+<p><em>Note:</em> As Helix is inspired by Vim and <a href="https://github.com/mawww/kakoune">Kakoune</a>, the keybindings are similar but also have some differences. The content of this page is inspired by <a href="https://github.com/mawww/kakoune/wiki/Migrating-from-Vim">Kakoune Wiki</a>.</p>
+<p>NOTE: Unlike vim, <code>f</code>, <code>F</code>, <code>t</code> and <code>T</code> are not confined to the current line.</p>
+<h2 id="deletechange-commands"><a class="header" href="#deletechange-commands">Delete/Change Commands</a></h2>
+<p>delete a word:</p>
+<ul>
+<li>vim: <code>dw</code></li>
+<li>helix: <code>wd</code></li>
+</ul>
+<p>change a word:</p>
+<ul>
+<li>vim: <code>cw</code></li>
+<li>helix: <code>ec</code> or <code>wc</code> (includes the whitespace after the word)</li>
+</ul>
+<p>delete a character:</p>
+<ul>
+<li>vim: <code>x</code></li>
+<li>helix: <code>d</code> or <code>;d</code> (<code>;</code> reduces the selection to a single char)</li>
+</ul>
+<p>copy a line:</p>
+<ul>
+<li>vim: <code>yy</code></li>
+<li>helix: <code>Xy</code> (<code>X</code> extends all selections to whole lines)</li>
+</ul>
+<p>global replace:</p>
+<ul>
+<li>vim: <code>:%s/word/replacement/g&lt;ret&gt;</code></li>
+<li>helix: <code>%sword&lt;ret&gt;creplacement&lt;esc&gt;</code></li>
+</ul>
+<p>Explanation: <code>%</code> selects the entire buffer, <code>s</code> opens a prompt for a regex, <code>&lt;ret&gt;</code> validates the regex and reduces the selection to each match (hence, all occurrences of word are selected). <code>c</code> deletes the selection contents and enter insert mode, replacement is typed and then <code>&lt;esc&gt;</code> goes back to normal mode.</p>
+<h2 id="navigation"><a class="header" href="#navigation">Navigation</a></h2>
+<p>go to first line:</p>
+<ul>
+<li>vim: <code>gg</code></li>
+<li>helix: <code>gg</code></li>
+</ul>
+<p>go to last line:</p>
+<ul>
+<li>vim: <code>G</code></li>
+<li>helix: <code>ge</code></li>
+</ul>
+<p>go to line start:</p>
+<ul>
+<li>vim: <code>0</code></li>
+<li>helix: <code>gh</code></li>
+</ul>
+<p>go to line first non-blank character:</p>
+<ul>
+<li>vim: <code>^</code></li>
+<li>helix: <code>gs</code></li>
+</ul>
+<p>go to line end:</p>
+<ul>
+<li>vim: <code>$</code></li>
+<li>helix: <code>gl</code></li>
+</ul>
+<p>jump to matching bracket:</p>
+<ul>
+<li>vim: <code>%</code></li>
+<li>helix: <code>mm</code></li>
+</ul>
+<h2 id="line-deletes"><a class="header" href="#line-deletes">Line Deletes</a></h2>
+<p>delete to line end:</p>
+<ul>
+<li>vim: <code>D</code></li>
+<li>helix: <code>vgld</code> or <code>t&lt;ret&gt;d</code></li>
+</ul>
+<p>Note: <code>v</code> is used along with <code>gl</code> (go to line end), because <a href="https://github.com/helix-editor/helix/issues/1630"><code>gl</code> does not select text</a>.
+<code>t&lt;ret&gt;</code> selects "'til" the newline represented by <code>&lt;ret&gt;</code>.</p>
+<p>delete entire line:</p>
+<ul>
+<li>vim: <code>dd</code></li>
+<li>helix: <code>xd</code></li>
+</ul>
+<p>Note: <code>x</code> selects the entire line under the cursor</p>
+<h2 id="comment-lines-completion-search"><a class="header" href="#comment-lines-completion-search">Comment lines, Completion, Search</a></h2>
+<p>auto complete:</p>
+<ul>
+<li>vim: <code>C-p</code></li>
+<li>helix: <code>C-x</code></li>
+</ul>
+<p>comment lines:</p>
+<ul>
+<li>vim: <code>gc</code></li>
+<li>helix: <code>Space-c</code></li>
+</ul>
+<p>search for the word under the cursor:</p>
+<ul>
+<li>vim: <code>*</code></li>
+<li>helix: <code>A-o*n</code> (if there's a tree-sitter grammar or LSP) or <code>be*n</code></li>
+</ul>
+<p>Explanation: if there's a grammar or LSP, <code>A-o</code> expands selection to the parent syntax node (which would be the word in our case). Then <code>*</code> uses the current selection as the search pattern, and <code>n</code> goes to the next occurrence. <code>b</code> selects to the beginning of the word, and <code>e</code> selects to the end of the word, effectively selecting the whole word.</p>
+<p>block selection:</p>
+<ul>
+<li>vim: <code>C-v</code>, then expand your selection vertically and horizontally</li>
+<li>helix: There's no "block selection" mode, so instead you'd use multiple cursors. Expand your block selection vertically by adding new cursors on the line below with <code>C</code>, and horizontally using standard movements</li>
+</ul>
+<p>search "foo" and replace with "bar" in the current selection:</p>
+<ul>
+<li>vim: <code>:s/foo/bar/g&lt;ret&gt;</code></li>
+<li>helix: <code>sfoo&lt;ret&gt;cbar&lt;esc&gt;,</code></li>
+</ul>
+<p>Explanation: <code>s</code> will open a prompt in the command line for a regex, and select all matches inside the selection (effectively adding a new cursor on each match). Pressing enter will then finalise this step, and allow the <code>c</code> to change the selections to "bar". When done, go back to normal mode with <code>&lt;esc&gt;</code>, and keep only the primary selection with <code>,</code> (remove all the additional cursors).</p>
+<h2 id="file-actions"><a class="header" href="#file-actions">File actions</a></h2>
+<p>select the whole file:</p>
+<ul>
+<li>vim: <code>ggVG</code></li>
+<li>helix: <code>%</code></li>
+</ul>
+<p>reload a file from disk:</p>
+<ul>
+<li>vim: <code>:e&lt;ret&gt;</code></li>
+<li>helix: <code>:reload&lt;ret&gt;</code> (or <code>:reload-all&lt;ret&gt;</code> to reload all the buffers)</li>
+</ul>
+<p>run shell command:</p>
+<ul>
+<li>vim: <code>:!command</code></li>
+<li>helix: <code>:sh command</code> (or <code>!command</code> to insert its output into the buffer)</li>
+</ul>
+<p>setting a bookmark (bookmarking a location):</p>
+<ul>
+<li>vim: <code>ma</code> to set bookmark with name a. Use <code>`a</code> to go back to this bookmarked location.</li>
+<li>helix: there are no named bookmarks, but you can save a location in the jumplist with <code>C-s</code>, then jump back to that location by opening the jumplist picker with <code>&lt;space&gt;-j</code>, or back in the jumplist with <code>C-o</code> and forward with <code>C-i</code></li>
+</ul>
+<p>Helix allows <a href="https://docs.helix-editor.com/keymap.html#insert-mode">some limited movement in <code>insert</code> mode</a> without switching to <code>normal</code> mode.</p>
+<p>Unlike Vim, under Helix, the cursor shape is the same (block) in insert mode and normal mode by default.
+This can be adjusted in configuration:</p>
+<pre><code class="language-toml">[editor.cursor-shape]
+insert = "bar"
+</code></pre>
 <blockquote>
 <p>TODO: Mention textobjects, surround, registers</p>
 </blockquote>
@@ -2054,6 +2206,7 @@ Its settings will be merged with the configuration directory and the built-in co
 <li><a href="editor.html#editorlsp-section"><code>[editor.lsp]</code> Section</a></li>
 <li><a href="editor.html#editorcursor-shape-section"><code>[editor.cursor-shape]</code> Section</a></li>
 <li><a href="editor.html#editorfile-picker-section"><code>[editor.file-picker]</code> Section</a></li>
+<li><a href="editor.html#editorfile-explorer-section"><code>[editor.file-explorer]</code> Section</a></li>
 <li><a href="editor.html#editorbuffer-picker-section"><code>[editor.buffer-picker]</code> Section</a></li>
 <li><a href="editor.html#editorauto-pairs-section"><code>[editor.auto-pairs]</code> Section</a></li>
 <li><a href="editor.html#editorauto-save-section"><code>[editor.auto-save]</code> Section</a></li>
@@ -3060,7 +3213,7 @@ language-servers = [ "mylang-lsp" ]
 <tr><td><code>injection-regex</code></td><td>regex pattern that will be tested against a language name in order to determine whether this language should be used for a potential <a href="https://tree-sitter.github.io/tree-sitter/3-syntax-highlighting.html#language-injection">language injection</a> site.</td></tr>
 <tr><td><code>file-types</code></td><td>The filetypes of the language, for example <code>["yml", "yaml"]</code>. See the file-type detection section below.</td></tr>
 <tr><td><code>shebangs</code></td><td>The interpreters from the shebang line, for example <code>["sh", "bash"]</code></td></tr>
-<tr><td><code>roots</code></td><td>A set of marker files to look for when trying to find the workspace root. For example <code>Cargo.lock</code>, <code>yarn.lock</code></td></tr>
+<tr><td><code>roots</code></td><td>A set of marker files to look for when trying to find the workspace root. For example <code>Cargo.lock</code>, <code>yarn.lock</code>, <code>*.csproj</code></td></tr>
 <tr><td><code>auto-format</code></td><td>Whether to autoformat this language when saving</td></tr>
 <tr><td><code>diagnostic-severity</code></td><td>Minimal severity of diagnostic for it to be displayed. (Allowed values: <code>error</code>, <code>warning</code>, <code>info</code>, <code>hint</code>)</td></tr>
 <tr><td><code>comment-tokens</code></td><td>The tokens to use as a comment token, either a single token <code>"//"</code> or an array <code>["//", "///", "//!"]</code> (the first token will be used for commenting). Also configurable as <code>comment-token</code> for backwards compatibility</td></tr>
@@ -3311,12 +3464,14 @@ in its <code>textobjects.scm</code> file, function navigation should also work a
 <code>function.movement</code> should be defined only if the node captured by <code>function.around</code>
 doesn't make sense in a navigation context.</p>
 <div style="break-before: page; page-break-before: always;"></div><h2 id="adding-indent-queries"><a class="header" href="#adding-indent-queries">Adding indent queries</a></h2>
-<p>Helix uses tree-sitter to correctly indent new lines. This requires a tree-
-sitter grammar and an <code>indent.scm</code> query file placed in <code>runtime/queries/ {language}/indents.scm</code>. The indentation for a line is calculated by traversing
-the syntax tree from the lowest node at the beginning of the new line (see
-<a href="guides/indent.html#indent-queries">Indent queries</a>). Each of these nodes contributes to the total
-indent when it is captured by the query (in what way depends on the name of
-the capture.</p>
+<p>Helix uses tree-sitter to correctly indent new lines. This requires a
+tree-sitter grammar and an <code>indent.scm</code> query file placed in
+<code>runtime/queries/{language}/indents.scm</code>. The indentation for a line is
+calculated by traversing the syntax tree from the lowest node at the
+beginning of the new line (see <a href="guides/indent.html#indent-queries">Indent queries</a>).
+Each of these nodes contributes to the total indent when it is
+captured by the query (in what way depends on the name of
+the capture).</p>
 <p>Note that it matters where these added indents begin. For example,
 multiple indent level increases that start on the same line only increase
 the total indent level by 1. See <a href="guides/indent.html#capture-types">Capture types</a>.</p>
@@ -3766,7 +3921,7 @@ names of rules in the grammar. Brackets are usually written in tree-sitter
 grammars as literal strings, for example:</p>
 <pre><code class="language-js">{
   // ...
-  arguments: seq("(", repeat($.argument), ")"),
+  arguments: $ =&gt; seq("(", repeat($.argument), ")"),
   // ...
 }
 </code></pre>
