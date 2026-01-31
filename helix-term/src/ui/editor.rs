@@ -217,6 +217,11 @@ impl EditorView {
                         .or_else(|| theme.try_get("ui.cursor.normal"))
                         .or_else(|| theme.try_get("ui.cursor.primary"))
                         .unwrap_or_else(|| theme.get("ui.cursor")),
+                    Mode::FileTree => theme
+                        .try_get("ui.cursor.primary.normal")
+                        .or_else(|| theme.try_get("ui.cursor.normal"))
+                        .or_else(|| theme.try_get("ui.cursor.primary"))
+                        .unwrap_or_else(|| theme.get("ui.cursor")),
                 };
 
                 decorations.add_decoration(InlineCompletionDecoration::new(

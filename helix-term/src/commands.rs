@@ -7305,7 +7305,7 @@ fn file_tree_move(cx: &mut Context) {
             if std::fs::rename(&item.path, &input).is_ok() {
                 let file_tree = &mut cx.editor.file_tree;
                 let mut item = file_tree.take_selected().unwrap();
-                item.name = input.split('/').last().unwrap().to_string();
+                item.name = input.split('/').next_back().unwrap().to_string();
                 item.path = PathBuf::from_str(&input).expect("valid if rename was sucessful");
                 if let Some(parent) = file_tree.find_with_path(item.path.parent().unwrap()) {
                     if parent.is_expanded {
