@@ -241,6 +241,12 @@ impl Editor {
                 });
                 if !ignore_if_exists || !path.exists() {
                     self.create_path(path, false)?;
+
+                    if !self.file_watcher.is_watching(path) {
+                        self.language_servers
+                            .file_event_handler
+                            .file_changed(path.to_path_buf());
+                    }
                 }
             }
             ResourceOp::Delete(op) => {
@@ -252,6 +258,13 @@ impl Editor {
                     .is_some_and(|options| options.ignore_if_not_exists.unwrap_or(false));
                 if ignore_if_not_exists && !path.exists() {
                     return Ok(());
+                }
+                if path.is_file() {
+                    if !self.file_watcher.is_watching(path) {
+                        self.language_servers
+                            .file_event_handler
+                            .file_changed(path.to_path_buf());
+                    }
                 }
                 let recursive = op
                     .options
