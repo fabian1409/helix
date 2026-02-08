@@ -1,0 +1,1441 @@
+From abf7a4cae5655bdf3bb661af7e7974b7aa774b9a Mon Sep 17 00:00:00 2001
+From: Rolo <roloedits@gmail.com>
+Date: Mon, 23 Dec 2024 03:36:44 -0800
+Subject: [PATCH 1/2] feat: add support for custom typable commands
+
+---
+ helix-core/src/command_line.rs    |  38 ++-
+ helix-term/src/commands.rs        |  12 +-
+ helix-term/src/commands/typed.rs  | 372 ++++++++++++++++++++++--------
+ helix-term/src/config.rs          | 115 ++++++++-
+ helix-view/src/commands/custom.rs | 240 +++++++++++++++++++
+ helix-view/src/commands/mod.rs    |   1 +
+ helix-view/src/document.rs        |   2 +-
+ helix-view/src/editor.rs          |   5 +
+ helix-view/src/expansion.rs       |  50 +++-
+ helix-view/src/lib.rs             |   1 +
+ 10 files changed, 718 insertions(+), 118 deletions(-)
+ create mode 100644 helix-view/src/commands/custom.rs
+ create mode 100644 helix-view/src/commands/mod.rs
+
+diff --git a/helix-core/src/command_line.rs b/helix-core/src/command_line.rs
+index 8e209d6180e0..bc0852d21e99 100644
+--- a/helix-core/src/command_line.rs
++++ b/helix-core/src/command_line.rs
+@@ -25,7 +25,14 @@
+ //! This module also defines structs for configuring the parsing of the command line for a
+ //! command. See `Flag` and `Signature`.
+ 
+-use std::{borrow::Cow, collections::HashMap, error::Error, fmt, ops, slice, vec};
++use std::{
++    borrow::Cow,
++    collections::HashMap,
++    error::Error,
++    fmt, ops,
++    slice::{self},
++    vec,
++};
+ 
+ /// Splits a command line into the command and arguments parts.
+ ///
+@@ -253,6 +260,10 @@ pub enum ExpansionKind {
+     ///
+     /// For example `%sh{echo hello}`.
+     Shell,
++    /// Represents a placeholder positional argument.
++    ///
++    /// For example `%arg{0}`
++    Arg,
+ }
+ 
+ impl ExpansionKind {
+@@ -263,6 +274,7 @@ impl ExpansionKind {
+             Self::Variable => "",
+             Self::Unicode => "u",
+             Self::Shell => "sh",
++            Self::Arg => "arg",
+         }
+     }
+ 
+@@ -271,6 +283,7 @@ impl ExpansionKind {
+             "" => Some(Self::Variable),
+             "u" => Some(Self::Unicode),
+             "sh" => Some(Self::Shell),
++            "arg" => Some(Self::Arg),
+             _ => None,
+         }
+     }
+@@ -742,6 +755,7 @@ pub struct Args<'a> {
+ }
+ 
+ impl Default for Args<'_> {
++    #[inline]
+     fn default() -> Self {
+         Self {
+             signature: Signature::DEFAULT,
+@@ -755,6 +769,7 @@ impl Default for Args<'_> {
+ }
+ 
+ impl<'a> Args<'a> {
++    #[inline]
+     pub fn new(signature: Signature, validate: bool) -> Self {
+         Self {
+             signature,
+@@ -766,6 +781,11 @@ impl<'a> Args<'a> {
+         }
+     }
+ 
++    #[inline]
++    pub fn empty() -> Self {
++        Self::default()
++    }
++
+     /// Reads the next token out of the given parser.
+     ///
+     /// If the command's signature sets a maximum number of positionals (via `raw_after`) then
+@@ -897,6 +917,7 @@ impl<'a> Args<'a> {
+     ///
+     /// For example if the last argument in the command line is `--foo` then the argument may be
+     /// considered to be a flag.
++    #[inline]
+     pub fn completion_state(&self) -> CompletionState {
+         self.state
+     }
+@@ -904,6 +925,7 @@ impl<'a> Args<'a> {
+     /// Returns the number of positionals supplied in the input.
+     ///
+     /// This number does not account for any flags passed in the input.
++    #[inline]
+     pub fn len(&self) -> usize {
+         self.positionals.len()
+     }
+@@ -912,27 +934,38 @@ impl<'a> Args<'a> {
+     ///
+     /// Note that this function returns `true` if there are no positional arguments even if the
+     /// input contained flags.
++    #[inline]
+     pub fn is_empty(&self) -> bool {
+         self.positionals.is_empty()
+     }
+ 
+     /// Gets the first positional argument, if one exists.
++    #[inline]
+     pub fn first(&'a self) -> Option<&'a str> {
+         self.positionals.first().map(AsRef::as_ref)
+     }
+ 
+     /// Gets the positional argument at the given index, if one exists.
++    #[inline]
+     pub fn get(&'a self, index: usize) -> Option<&'a str> {
+         self.positionals.get(index).map(AsRef::as_ref)
+     }
+ 
++    /// Gets the positional arguments as a slice.
++    #[inline]
++    pub fn as_slice(&self) -> &[Cow<'a, str>] {
++        &self.positionals
++    }
++
+     /// Flattens all positional arguments together with the given separator between each
+     /// positional.
++    #[inline]
+     pub fn join(&self, sep: &str) -> String {
+         self.positionals.join(sep)
+     }
+ 
+     /// Returns an iterator over all positional arguments.
++    #[inline]
+     pub fn iter(&self) -> slice::Iter<'_, Cow<'_, str>> {
+         self.positionals.iter()
+     }
+@@ -981,6 +1014,7 @@ impl<'a> Args<'a> {
+ impl ops::Index<usize> for Args<'_> {
+     type Output = str;
+ 
++    #[inline]
+     fn index(&self, index: usize) -> &Self::Output {
+         self.positionals[index].as_ref()
+     }
+@@ -991,6 +1025,7 @@ impl<'a> IntoIterator for Args<'a> {
+     type Item = Cow<'a, str>;
+     type IntoIter = vec::IntoIter<Cow<'a, str>>;
+ 
++    #[inline]
+     fn into_iter(self) -> Self::IntoIter {
+         self.positionals.into_iter()
+     }
+@@ -1001,6 +1036,7 @@ impl<'i, 'a> IntoIterator for &'i Args<'a> {
+     type Item = &'i Cow<'a, str>;
+     type IntoIter = slice::Iter<'i, Cow<'a, str>>;
+ 
++    #[inline]
+     fn into_iter(self) -> Self::IntoIter {
+         self.positionals.iter()
+     }
+diff --git a/helix-term/src/commands.rs b/helix-term/src/commands.rs
+index 4c12b0239854..512b16e3351a 100644
+--- a/helix-term/src/commands.rs
++++ b/helix-term/src/commands.rs
+@@ -255,9 +255,13 @@ impl MappableCommand {
+                         jobs: cx.jobs,
+                         scroll: None,
+                     };
+-                    if let Err(e) =
+-                        typed::execute_command(&mut cx, command, args, PromptEvent::Validate)
+-                    {
++                    if let Err(e) = typed::execute_command(
++                        &mut cx,
++                        command,
++                        args,
++                        &Args::empty(),
++                        PromptEvent::Validate,
++                    ) {
+                         cx.editor.set_error(format!("{}", e));
+                     }
+                 } else {
+@@ -6487,7 +6491,7 @@ where
+                 return;
+             }
+             match Args::parse(input, SHELL_SIGNATURE, true, |token| {
+-                expansion::expand(cx.editor, token).map_err(|err| err.into())
++                expansion::expand(cx.editor, token, &[]).map_err(|err| err.into())
+             }) {
+                 Ok(args) => callback_fn(cx, args),
+                 Err(err) => cx.editor.set_error(err.to_string()),
+diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
+index b928dd4f28d0..f9db040a9d94 100644
+--- a/helix-term/src/commands/typed.rs
++++ b/helix-term/src/commands/typed.rs
+@@ -11,8 +11,9 @@ use helix_core::fuzzy::fuzzy_match;
+ use helix_core::indent::MAX_INDENT;
+ use helix_core::line_ending;
+ use helix_stdx::path::home_dir;
++use helix_view::commands::custom::CustomTypableCommand;
+ use helix_view::document::{read_to_string, DEFAULT_LANGUAGE_NAME};
+-use helix_view::editor::{CloseError, ConfigEvent};
++use helix_view::editor::{CloseError, Config, ConfigEvent};
+ use helix_view::expansion;
+ use serde_json::Value;
+ use ui::completers::{self, Completer};
+@@ -29,6 +30,89 @@ pub struct TypableCommand {
+     pub signature: Signature,
+ }
+ 
++impl TypableCommand {
++    /// Encapsulates creating rules for a custom command
++    ///
++    /// Mainly, this sets up how the arguments passed in should be parsed, which
++    /// are then used to potentially substitute `%arg{}` placeholders.
++    ///
++    /// This also sets up any completer that may be associated with the custom command.
++    fn custom_with_completer_from(command: &str) -> Self {
++        Self {
++            name: "custom",
++            aliases: &[],
++            doc: "",
++            fun: noop,
++            completer: typed::TYPABLE_COMMAND_MAP
++                .get(command)
++                .map_or_else(CommandCompleter::none, |command| command.completer.clone()),
++            signature: Signature::DEFAULT,
++        }
++    }
++
++    /// Builds the typable commands' prompt documentation.
++    fn prompt(&self) -> Cow<'_, str> {
++        if self.aliases.is_empty() && self.signature.flags.is_empty() {
++            return Cow::Borrowed(self.doc);
++        }
++
++        let mut doc = self.doc.to_string();
++
++        if !self.aliases.is_empty() {
++            write!(doc, "\nAliases: {}", self.aliases.join(", ")).unwrap();
++        }
++
++        if !self.signature.flags.is_empty() {
++            const ARG_PLACEHOLDER: &str = " <arg>";
++
++            fn flag_len(flag: &Flag) -> usize {
++                let name_len = flag.name.len();
++                let alias_len = flag.alias.map_or(0, |alias| "/-".len() + alias.len_utf8());
++                let arg_len = if flag.completions.is_some() {
++                    ARG_PLACEHOLDER.len()
++                } else {
++                    0
++                };
++                name_len + alias_len + arg_len
++            }
++
++            doc.push_str("\nFlags:");
++
++            let max_flag_len = self.signature.flags.iter().map(flag_len).max().unwrap();
++
++            for flag in self.signature.flags {
++                let mut buf = [0u8; 4];
++                let this_flag_len = flag_len(flag);
++                write!(
++                    doc,
++                    "\n  --{flag_text}{spacer:spacing$}  {doc}",
++                    doc = flag.doc,
++                    // `fmt::Arguments` does not respect width controls so we must place the spacers
++                    // explicitly:
++                    spacer = "",
++                    spacing = max_flag_len - this_flag_len,
++                    flag_text = format_args!(
++                        "{}{}{}{}",
++                        flag.name,
++                        // Ideally this would be written as a `format_args!` too but the borrow
++                        // checker is not yet smart enough.
++                        if flag.alias.is_some() { "/-" } else { "" },
++                        flag.alias.map_or("", |alias| alias.encode_utf8(&mut buf)),
++                        if flag.completions.is_some() {
++                            ARG_PLACEHOLDER
++                        } else {
++                            ""
++                        }
++                    ),
++                )
++                .unwrap();
++            }
++        }
++
++        Cow::Owned(doc)
++    }
++}
++
+ #[derive(Clone)]
+ pub struct CommandCompleter {
+     // Arguments with specific completion methods based on their position.
+@@ -61,10 +145,7 @@ impl CommandCompleter {
+     }
+ 
+     fn for_argument_number(&self, n: usize) -> &Completer {
+-        match self.positional_args.get(n) {
+-            Some(completer) => completer,
+-            _ => &self.var_args,
+-        }
++        self.positional_args.get(n).unwrap_or(&self.var_args)
+     }
+ }
+ 
+@@ -2120,7 +2201,12 @@ fn set_option(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
+     } else {
+         arg.parse().map_err(field_error)?
+     };
+-    let config = serde_json::from_value(config).map_err(field_error)?;
++    let mut config: Box<Config> = serde_json::from_value(config).map_err(field_error)?;
++
++    // Copy custom commands over to new config.
++    //
++    // PERF: `CustomTypableCommands` is a wrapper around an `Arc`, and cheap to clone.
++    config.commands = cx.editor.config().commands.clone();
+ 
+     cx.editor
+         .config_events
+@@ -2214,9 +2300,14 @@ fn toggle_option(
+     };
+ 
+     let status = format!("'{key}' is now set to {value}");
+-    let config = serde_json::from_value(config)
++    let mut config: Box<Config> = serde_json::from_value(config)
+         .map_err(|err| anyhow::anyhow!("Failed to parse config: {err}"))?;
+ 
++    // Copy custom commands over to new config.
++    //
++    // PERF: `CustomTypableCommands` is a wrapper around an `Arc`, and cheap to clone.
++    config.commands = cx.editor.config().commands.clone();
++
+     cx.editor
+         .config_events
+         .0
+@@ -3807,19 +3898,55 @@ fn execute_command_line(
+     input: &str,
+     event: PromptEvent,
+ ) -> anyhow::Result<()> {
+-    let (command, rest, _) = command_line::split(input);
++    let (command, args, _) = command_line::split(input);
+     if command.is_empty() {
+         return Ok(());
+     }
+ 
++    let is_escaped = command.starts_with(CustomTypableCommand::ESCAPE);
++    let command = command.trim_start_matches(CustomTypableCommand::ESCAPE);
++
++    // Try custom command before anything else. Doing so means that numbers, for example `:0`, can now be
++    // mapped to a different command than `goto` if wanted.
++
++    // Escapes custom commands that might be shadowing a built in command.
++    //
++    // Example:
++    // This allows to have an `:w` custom command that could have formatting disabled but
++    // also allow the built-in `:w` to be callable.
++    if !is_escaped {
++        if let Some(custom) = cx.editor.config().commands.get(command) {
++            let posargs = Args::parse(
++                args,
++                TypableCommand::custom_with_completer_from(command).signature,
++                false,
++                |token| Ok(token.content),
++            )
++            .expect("arg parsing cannot fail when validation is turned off");
++
++            for command in &custom.commands {
++                let (command, args, _) = command_line::split(command);
++
++                if let Some(typed) = typed::TYPABLE_COMMAND_MAP.get(command) {
++                    execute_command(cx, typed, args, &posargs, event)?;
++                } else if let Some(r#macro) = command.strip_prefix('@') {
++                    execute_macro(cx, r#macro, event)?;
++                } else {
++                    execute_static_command(cx, command, event)?;
++                }
++            }
++            return Ok(());
++        }
++    }
++
+     // If command is numeric, interpret as line number and go there.
+-    if command.parse::<usize>().is_ok() && rest.trim().is_empty() {
++    if command.parse::<usize>().is_ok() && args.trim().is_empty() {
+         let cmd = TYPABLE_COMMAND_MAP.get("goto").unwrap();
+-        return execute_command(cx, cmd, command, event);
++        return execute_command(cx, cmd, command, &Args::empty(), event);
+     }
+ 
+     match typed::TYPABLE_COMMAND_MAP.get(command) {
+-        Some(cmd) => execute_command(cx, cmd, rest, event),
++        Some(cmd) => execute_command(cx, cmd, args, &Args::empty(), event),
+         None if event == PromptEvent::Validate => Err(anyhow!("no such command: '{command}'")),
+         None => Ok(()),
+     }
+@@ -3829,21 +3956,89 @@ pub(super) fn execute_command(
+     cx: &mut compositor::Context,
+     cmd: &TypableCommand,
+     args: &str,
++    posargs: &Args,
+     event: PromptEvent,
+ ) -> anyhow::Result<()> {
+     let args = if event == PromptEvent::Validate {
+         Args::parse(args, cmd.signature, true, |token| {
+-            expansion::expand(cx.editor, token).map_err(|err| err.into())
++            expansion::expand(cx.editor, token, posargs.as_slice()).map_err(|err| err.into())
+         })
+         .map_err(|err| anyhow!("'{}': {err}", cmd.name))?
+     } else {
+-        Args::parse(args, cmd.signature, false, |token| Ok(token.content))
+-            .expect("arg parsing cannot fail when validation is turned off")
++        Args::parse(args, cmd.signature, false, |token| {
++            expansion::expand_only_arg(token, posargs.as_slice()).map_err(|err| err.into())
++        })
++        .map_err(|err| anyhow!("'{}': {err}", cmd.name))?
+     };
+ 
+     (cmd.fun)(cx, args, event).map_err(|err| anyhow!("'{}': {err}", cmd.name))
+ }
+ 
++fn execute_macro(
++    cx: &mut compositor::Context,
++    r#macro: &str,
++    event: PromptEvent,
++) -> anyhow::Result<()> {
++    if event != PromptEvent::Validate {
++        return Ok(());
++    }
++
++    let keys = helix_view::input::parse_macro(r#macro)?;
++
++    let mut cx = super::Context {
++        register: None,
++        count: None,
++        editor: cx.editor,
++        callback: vec![],
++        on_next_key_callback: None,
++        jobs: cx.jobs,
++    };
++
++    // Protect against recursive macros.
++    if cx.editor.macro_replaying.contains(&'@') {
++        bail!("Cannot execute macro because the [@] register is already playing a macro",);
++    }
++
++    cx.editor.macro_replaying.push('@');
++
++    cx.callback.push(Box::new(move |compositor, cx| {
++        for key in keys {
++            compositor.handle_event(&compositor::Event::Key(key), cx);
++        }
++        cx.editor.macro_replaying.pop();
++    }));
++
++    Ok(())
++}
++
++fn execute_static_command(
++    cx: &mut compositor::Context,
++    command: &str,
++    event: PromptEvent,
++) -> anyhow::Result<()> {
++    if event != PromptEvent::Validate {
++        return Ok(());
++    }
++
++    let mut cx = super::Context {
++        register: None,
++        count: None,
++        editor: cx.editor,
++        callback: vec![],
++        on_next_key_callback: None,
++        jobs: cx.jobs,
++    };
++
++    // TODO: benchmark `STATIC_COMMAND_LIST` against a `STATIC_COMMAND_MAP`
++    MappableCommand::STATIC_COMMAND_LIST
++        .iter()
++        .find(|cmd| cmd.name() == command)
++        .ok_or_else(|| anyhow!("No command named '{}'", command))?
++        .execute(&mut cx);
++
++    Ok(())
++}
++
+ #[allow(clippy::unnecessary_unwrap)]
+ pub(super) fn command_mode(cx: &mut Context) {
+     let mut prompt = Prompt::new(
+@@ -3856,104 +4051,90 @@ pub(super) fn command_mode(cx: &mut Context) {
+             }
+         },
+     );
+-    prompt.doc_fn = Box::new(command_line_doc);
+ 
+-    // Calculate initial completion
+-    prompt.recalculate_completion(cx.editor);
+-    cx.push_layer(Box::new(prompt));
+-}
+-
+-fn command_line_doc(input: &str) -> Option<Cow<'_, str>> {
+-    let (command, _, _) = command_line::split(input);
+-    let command = TYPABLE_COMMAND_MAP.get(command)?;
+-
+-    if command.aliases.is_empty() && command.signature.flags.is_empty() {
+-        return Some(Cow::Borrowed(command.doc));
+-    }
++    let custom = cx.editor.config().commands.clone();
+ 
+-    let mut doc = command.doc.to_string();
++    prompt.doc_fn = Box::new(move |input| {
++        let (command, _, _) = command_line::split(input);
+ 
+-    if !command.aliases.is_empty() {
+-        write!(doc, "\nAliases: {}", command.aliases.join(", ")).unwrap();
+-    }
+-
+-    if !command.signature.flags.is_empty() {
+-        const ARG_PLACEHOLDER: &str = " <arg>";
++        let doc = match custom.get(command) {
++            Some(command) => {
++                if command.hidden {
++                    return None;
++                }
+ 
+-        fn flag_len(flag: &Flag) -> usize {
+-            let name_len = flag.name.len();
+-            let alias_len = if let Some(alias) = flag.alias {
+-                "/-".len() + alias.len_utf8()
+-            } else {
+-                0
+-            };
+-            let arg_len = if flag.completions.is_some() {
+-                ARG_PLACEHOLDER.len()
+-            } else {
+-                0
+-            };
+-            name_len + alias_len + arg_len
+-        }
++                Cow::Owned(command.prompt())
++            }
++            None => TYPABLE_COMMAND_MAP.get(command)?.prompt(),
++        };
+ 
+-        doc.push_str("\nFlags:");
+-
+-        let max_flag_len = command.signature.flags.iter().map(flag_len).max().unwrap();
+-
+-        for flag in command.signature.flags {
+-            let mut buf = [0u8; 4];
+-            let this_flag_len = flag_len(flag);
+-            write!(
+-                doc,
+-                "\n  --{flag_text}{spacer:spacing$}  {doc}",
+-                doc = flag.doc,
+-                // `fmt::Arguments` does not respect width controls so we must place the spacers
+-                // explicitly:
+-                spacer = "",
+-                spacing = max_flag_len - this_flag_len,
+-                flag_text = format_args!(
+-                    "{}{}{}{}",
+-                    flag.name,
+-                    // Ideally this would be written as a `format_args!` too but the borrow
+-                    // checker is not yet smart enough.
+-                    if flag.alias.is_some() { "/-" } else { "" },
+-                    if let Some(alias) = flag.alias {
+-                        alias.encode_utf8(&mut buf)
+-                    } else {
+-                        ""
+-                    },
+-                    if flag.completions.is_some() {
+-                        ARG_PLACEHOLDER
+-                    } else {
+-                        ""
+-                    }
+-                ),
+-            )
+-            .unwrap();
+-        }
+-    }
++        Some(doc)
++    });
+ 
+-    Some(Cow::Owned(doc))
++    // Calculate initial completion
++    prompt.recalculate_completion(cx.editor);
++    cx.push_layer(Box::new(prompt));
+ }
+ 
+ fn complete_command_line(editor: &Editor, input: &str) -> Vec<ui::prompt::Completion> {
+     let (command, rest, complete_command) = command_line::split(input);
++    let config = editor.config();
++
++    let is_escaped = command.starts_with(CustomTypableCommand::ESCAPE);
++    let command = command.trim_start_matches(CustomTypableCommand::ESCAPE);
+ 
+     if complete_command {
+-        fuzzy_match(
+-            input,
+-            TYPABLE_COMMAND_LIST.iter().map(|command| command.name),
+-            false,
+-        )
+-        .into_iter()
+-        .map(|(name, _)| (0.., name.into()))
+-        .collect()
+-    } else {
++        if is_escaped {
++            fuzzy_match(
++                command,
++                TYPABLE_COMMAND_LIST.iter().map(|command| command.name),
++                false,
++            )
++            .into_iter()
++            .map(|(name, _)| (0.., name.into()))
++            .collect()
++        } else {
++            let custom = config
++                .commands
++                .non_hidden_names()
++                .map(|name| Cow::Owned(name.to_string()));
++
++            let builtin = TYPABLE_COMMAND_LIST
++                .iter()
++                .map(|command| Cow::Borrowed(command.name));
++
++            // NOTE: `custom.chain(builtin)` forces custom commands to be at the top of the list.
++            fuzzy_match(command, custom.chain(builtin), false)
++                .into_iter()
++                .map(|(name, _)| (0.., name.into()))
++                .collect()
++        }
++    } else if is_escaped {
+         TYPABLE_COMMAND_MAP
+             .get(command)
+             .map_or_else(Vec::new, |cmd| {
+                 let args_offset = command.len() + 1;
+                 complete_command_args(editor, cmd.signature, &cmd.completer, rest, args_offset)
+             })
++    } else {
++        // If `:t` maps to `:theme` then the `real_command` would be `theme` while `command` would be `t`.
++        // We need this distinction when replacing based off of a completion so that the `t` len is used
++        // not `theme`; 1 vs 5.
++        let real_command =
++            config
++                .commands
++                .get(command)
++                .map_or(command, |custom| match custom.completer {
++                    Some(ref command) => command,
++                    None => command,
++                });
++
++        TYPABLE_COMMAND_MAP
++            .get(real_command)
++            .map_or_else(Vec::new, |cmd| {
++                let args_offset = command.len() + 1;
++                complete_command_args(editor, cmd.signature, &cmd.completer, rest, args_offset)
++            })
+     }
+ }
+ 
+@@ -4061,6 +4242,9 @@ pub fn complete_command_args(
+         TokenKind::ExpansionKind => {
+             complete_expansion_kind(&token.content, offset + token.content_start)
+         }
++        TokenKind::Expansion(ExpansionKind::Arg) => {
++            unreachable!("Arg token should never be passed in")
++        }
+     }
+ }
+ 
+diff --git a/helix-term/src/config.rs b/helix-term/src/config.rs
+index dd05198418f1..4c815d4b3d4f 100644
+--- a/helix-term/src/config.rs
++++ b/helix-term/src/config.rs
+@@ -1,12 +1,14 @@
+-use crate::keymap;
++use crate::keymap::{self};
+ use crate::keymap::{merge_keys, KeyTrie};
+ use helix_loader::merge_toml_values;
++use helix_view::commands::custom::CustomTypableCommand;
+ use helix_view::{document::Mode, theme};
+ use serde::Deserialize;
+ use std::collections::HashMap;
+ use std::fmt::Display;
+ use std::fs;
+ use std::io::Error as IOError;
++use std::sync::Arc;
+ use toml::de::Error as TomlError;
+ 
+ #[derive(Debug, Clone, PartialEq)]
+@@ -22,6 +24,7 @@ pub struct ConfigRaw {
+     pub theme: Option<theme::Config>,
+     pub keys: Option<HashMap<Mode, KeyTrie>>,
+     pub editor: Option<toml::Value>,
++    commands: Option<Commands>,
+ }
+ 
+ impl Default for Config {
+@@ -34,6 +37,24 @@ impl Default for Config {
+     }
+ }
+ 
++#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
++struct Commands {
++    #[serde(flatten)]
++    commands: HashMap<String, CustomTypableCommand>,
++}
++
++impl Commands {
++    /// Adds the `key` of the command as the `name` and checks for the `hidden` status
++    /// and adds it to the `CustomTypableCommand`.
++    fn process(mut self) -> Self {
++        for (key, value) in &mut self.commands {
++            value.name = key.trim_start_matches(':').to_string();
++            value.hidden = !key.starts_with(':');
++        }
++        self
++    }
++}
++
+ #[derive(Debug)]
+ pub enum ConfigLoadError {
+     BadConfig(TomlError),
+@@ -65,7 +86,7 @@ impl Config {
+         let local_config: Result<ConfigRaw, ConfigLoadError> =
+             local.and_then(|file| toml::from_str(&file).map_err(ConfigLoadError::BadConfig));
+         let res = match (global_config, local_config) {
+-            (Ok(global), Ok(local)) => {
++            (Ok(mut global), Ok(local)) => {
+                 let mut keys = keymap::default();
+                 if let Some(global_keys) = global.keys {
+                     merge_keys(&mut keys, global_keys)
+@@ -74,7 +95,7 @@ impl Config {
+                     merge_keys(&mut keys, local_keys)
+                 }
+ 
+-                let editor = match (global.editor, local.editor) {
++                let mut editor = match (global.editor, local.editor) {
+                     (None, None) => helix_view::editor::Config::default(),
+                     (None, Some(val)) | (Some(val), None) => {
+                         val.try_into().map_err(ConfigLoadError::BadConfig)?
+@@ -84,6 +105,28 @@ impl Config {
+                         .map_err(ConfigLoadError::BadConfig)?,
+                 };
+ 
++                // Merge locally defined commands, overwriting global space commands if encountered
++                if let Some(lcommands) = local.commands {
++                    if let Some(gcommands) = &mut global.commands {
++                        for (name, details) in lcommands.commands {
++                            gcommands.commands.insert(name, details);
++                        }
++                    } else {
++                        global.commands = Some(lcommands);
++                    }
++                }
++
++                // If any commands were defined anywhere, add to editor
++                if let Some(commands) = global.commands.map(Commands::process) {
++                    let mut holder = Vec::with_capacity(commands.commands.len());
++
++                    for (_, command) in commands.commands {
++                        holder.push(command);
++                    }
++
++                    editor.commands.commands = Arc::from(holder);
++                }
++
+                 Config {
+                     theme: local.theme.or(global.theme),
+                     keys,
+@@ -100,13 +143,27 @@ impl Config {
+                 if let Some(keymap) = config.keys {
+                     merge_keys(&mut keys, keymap);
+                 }
++
++                let mut editor = config.editor.map_or_else(
++                    || Ok(helix_view::editor::Config::default()),
++                    |val| val.try_into().map_err(ConfigLoadError::BadConfig),
++                )?;
++
++                // Add custom commands
++                if let Some(commands) = config.commands.map(Commands::process) {
++                    let mut holder = Vec::with_capacity(commands.commands.len());
++
++                    for (_, command) in commands.commands {
++                        holder.push(command);
++                    }
++
++                    editor.commands.commands = Arc::from(holder);
++                }
++
+                 Config {
+                     theme: config.theme,
+                     keys,
+-                    editor: config.editor.map_or_else(
+-                        || Ok(helix_view::editor::Config::default()),
+-                        |val| val.try_into().map_err(ConfigLoadError::BadConfig),
+-                    )?,
++                    editor,
+                 }
+             }
+ 
+@@ -128,11 +185,12 @@ impl Config {
+ 
+ #[cfg(test)]
+ mod tests {
++
+     use super::*;
+ 
+     impl Config {
+-        fn load_test(config: &str) -> Config {
+-            Config::load(Ok(config.to_owned()), Err(ConfigLoadError::default())).unwrap()
++        fn load_test(config: &str) -> Result<Config, ConfigLoadError> {
++            Config::load(Ok(config.to_owned()), Err(ConfigLoadError::default()))
+         }
+     }
+ 
+@@ -166,7 +224,7 @@ mod tests {
+         );
+ 
+         assert_eq!(
+-            Config::load_test(sample_keymaps),
++            Config::load_test(sample_keymaps).unwrap(),
+             Config {
+                 keys,
+                 ..Default::default()
+@@ -177,11 +235,46 @@ mod tests {
+     #[test]
+     fn keys_resolve_to_correct_defaults() {
+         // From serde default
+-        let default_keys = Config::load_test("").keys;
++        let default_keys = Config::load_test("").unwrap().keys;
+         assert_eq!(default_keys, keymap::default());
+ 
+         // From the Default trait
+         let default_keys = Config::default().keys;
+         assert_eq!(default_keys, keymap::default());
+     }
++
++    #[test]
++    fn should_deserialize_custom_commands() {
++        let config = r#"
++[commands]
++":wq" = [":write", ":quit"]
++":w" = ":write!"
++":wcd!" = { commands = [':write! %arg{0}', ':cd %sh{ %arg{0} | path dirname }'], desc = "writes buffer to disk forcefully, then changes to its directory", accepts = "<path>", completer = ":write" }
++":0" = { commands = [":goto 1"] }
++":static" = "no_op"
++":d" = "@100xd"
++":foo" = { commands = ["no_op", ":noop"] }
++
++[commands.":touch"]
++commands = [":noop %sh{ touch %arg{0} }"]
++desc = "creates file at path"
++accepts = "<path>"
++completer = ":write"
++"#;
++
++        if let Err(err) = Config::load_test(config) {
++            panic!("{err:#?}")
++        };
++    }
++
++    #[test]
++    #[should_panic]
++    fn should_fail_to_deserialize_custom_command_with_macros_in_sequence() {
++        let config = r#"
++[commands]
++":fail" =  { commands = ["@100xd","@100xd"] }
++"#;
++
++        Config::load_test(config).unwrap();
++    }
+ }
+diff --git a/helix-view/src/commands/custom.rs b/helix-view/src/commands/custom.rs
+new file mode 100644
+index 000000000000..d16badf47915
+--- /dev/null
++++ b/helix-view/src/commands/custom.rs
+@@ -0,0 +1,240 @@
++use std::{fmt::Write, sync::Arc};
++
++use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
++
++/// Repository of custom commands.
++///
++/// This type wraps an `Arc` and is cheap to clone.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct CustomTypeableCommands {
++    pub commands: Arc<[CustomTypableCommand]>,
++}
++
++impl Default for CustomTypeableCommands {
++    fn default() -> Self {
++        Self {
++            commands: Arc::new([]),
++        }
++    }
++}
++
++impl CustomTypeableCommands {
++    /// Retrieves a command by its name if it exists.
++    #[must_use]
++    pub fn get(&self, name: &str) -> Option<&CustomTypableCommand> {
++        self.commands
++            .iter()
++            .find(|command| command.name == name.trim_start_matches(':'))
++    }
++
++    /// Returns the names of the custom commands that are not hidden.
++    #[inline]
++    pub fn non_hidden_names(&self) -> impl Iterator<Item = &str> {
++        self.commands
++            .iter()
++            .filter(|command| !command.hidden)
++            .map(|command| command.name.as_ref())
++    }
++}
++
++/// Represents a user-custom typable command.
++#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
++pub struct CustomTypableCommand {
++    /// The custom command that will be typed into the command line.
++    ///
++    /// For example `lg`
++    pub name: String,
++    /// The description of what the custom command does.
++    pub desc: Option<String>,
++    /// Single or multiple commands which will be executed via the custom command.
++    pub commands: Vec<String>,
++    /// Signifier if command accepts any input.
++    ///
++    /// This is only for documentation purposes.
++    pub accepts: Option<String>,
++    /// The name of the typeable of which the custom command emulate in its completions.
++    pub completer: Option<String>,
++    /// Whether or not the custom command is shown in the prompt list.
++    pub hidden: bool,
++}
++
++impl CustomTypableCommand {
++    /// Prefix for ignoring a custom typable command and referencing the editor typed command instead.
++    pub const ESCAPE: char = '^';
++
++    /// Builds the prompt documentation for command.
++    #[inline]
++    #[must_use]
++    pub fn prompt(&self) -> String {
++        // wcd! <path>: writes buffer forcefully, then changes to its directory
++        //
++        // maps:
++        //     :write! %arg{0} -> :cd %sh{ %arg{0} | path dirname }
++        let mut prompt = String::new();
++
++        prompt.push_str(self.name.as_ref());
++
++        if let Some(accepts) = &self.accepts {
++            write!(prompt, " {accepts}").unwrap();
++        }
++
++        prompt.push(':');
++
++        if let Some(desc) = &self.desc {
++            write!(prompt, " {desc}").unwrap();
++        }
++
++        prompt.push('\n');
++        prompt.push('\n');
++
++        writeln!(prompt, "maps:").unwrap();
++        prompt.push_str("   ");
++
++        for (idx, command) in self.commands.iter().enumerate() {
++            write!(prompt, ":{command}").unwrap();
++
++            if idx + 1 == self.commands.len() {
++                break;
++            }
++
++            // There are two columns of commands, and after that they will overflow
++            // downward:
++            //
++            // maps:
++            //     :write! %arg{0} -> :cd %sh{ %arg{0} | path dirname }
++            //     -> :write! %arg{0} -> :cd %sh{ %arg{0} | path dirname }
++            //     -> :write! %arg{0} -> :cd %sh{ %arg{0} | path dirname }
++            //
++            // Its starts with `->` to indicate that its not a new `:command`
++            // but still one sequence.
++            if idx % 2 == 0 {
++                prompt.push('\n');
++                prompt.push_str("    -> ");
++            } else {
++                prompt.push_str(" -> ");
++            }
++        }
++
++        prompt
++    }
++}
++
++impl<'de> Deserialize<'de> for CustomTypableCommand {
++    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
++    where
++        D: Deserializer<'de>,
++    {
++        deserializer.deserialize_any(CustomTypableCommandVisitor)
++    }
++}
++
++struct CustomTypableCommandVisitor;
++
++impl<'de> Visitor<'de> for CustomTypableCommandVisitor {
++    type Value = CustomTypableCommand;
++
++    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
++        formatter.write_str("a command, list of commands, or a detailed object")
++    }
++
++    fn visit_str<E>(self, command: &str) -> Result<Self::Value, E>
++    where
++        E: serde::de::Error,
++    {
++        Ok(CustomTypableCommand {
++            name: String::new(), // Placeholder, will be assigned later
++            desc: None,
++            commands: vec![command.trim_start_matches(':').to_string()],
++            accepts: None,
++            completer: None,
++            hidden: false,
++        })
++    }
++
++    fn visit_seq<S>(self, mut seq: S) -> Result<Self::Value, S::Error>
++    where
++        S: serde::de::SeqAccess<'de>,
++    {
++        let mut commands = Vec::with_capacity(4);
++        while let Some(command) = seq.next_element::<String>()? {
++            commands.push(command.trim_start_matches(':').to_string());
++        }
++
++        // Prevent macro keybindings from being used in command sequences.
++        // This is meant to be a temporary restriction pending a larger
++        // refactor of how command sequences are executed.
++        let macros = commands
++            .iter()
++            .filter(|command| command.starts_with('@'))
++            .count();
++
++        if macros > 1 || (macros == 1 && commands.len() > 1) {
++            return Err(serde::de::Error::custom(
++                "macro keybindings may not be used in command sequences",
++            ));
++        }
++
++        Ok(CustomTypableCommand {
++            name: String::new(), // Placeholder, will be assigned later
++            desc: None,
++            commands,
++            accepts: None,
++            completer: None,
++            hidden: false,
++        })
++    }
++
++    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
++    where
++        M: serde::de::MapAccess<'de>,
++    {
++        let mut commands = Vec::new();
++        let mut desc = None;
++        let mut accepts = None;
++        let mut completer: Option<String> = None;
++
++        while let Some(key) = map.next_key::<String>()? {
++            match key.as_str() {
++                "commands" => {
++                    commands = map
++                        .next_value::<Vec<String>>()?
++                        .into_iter()
++                        .map(|cmd| cmd.trim_start_matches(':').to_string())
++                        .collect();
++                }
++                "desc" => desc = map.next_value()?,
++                "accepts" => accepts = map.next_value()?,
++                "completer" => completer = map.next_value()?,
++                _ => {
++                    return Err(serde::de::Error::unknown_field(
++                        &key,
++                        &["commands", "desc", "accepts", "completer"],
++                    ))
++                }
++            }
++        }
++
++        // Prevent macro keybindings from being used in command sequences.
++        // This is meant to be a temporary restriction pending a larger
++        // refactor of how command sequences are executed.
++        let macros = commands
++            .iter()
++            .filter(|command| command.starts_with('@'))
++            .count();
++
++        if macros > 1 || (macros == 1 && commands.len() > 1) {
++            return Err(serde::de::Error::custom(
++                "macro keybindings may not be used in command sequences",
++            ));
++        }
++
++        Ok(CustomTypableCommand {
++            name: String::new(), // Placeholder, will be assigned later
++            desc,
++            commands,
++            accepts,
++            completer: completer.map(|c| c.trim_start_matches(':').to_string()),
++            hidden: false,
++        })
++    }
++}
+diff --git a/helix-view/src/commands/mod.rs b/helix-view/src/commands/mod.rs
+new file mode 100644
+index 000000000000..d5f905683aa7
+--- /dev/null
++++ b/helix-view/src/commands/mod.rs
+@@ -0,0 +1 @@
++pub mod custom;
+diff --git a/helix-view/src/document.rs b/helix-view/src/document.rs
+index 36fc3524917b..97298e5e5cfb 100644
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -841,7 +841,7 @@ impl Document {
+ 
+             let args = match fmt_args
+                 .iter()
+-                .map(|content| expansion::expand(editor, Token::expand(content)))
++                .map(|content| expansion::expand(editor, Token::expand(content), &[]))
+                 .collect::<Result<Vec<_>, _>>()
+             {
+                 Ok(args) => args,
+diff --git a/helix-view/src/editor.rs b/helix-view/src/editor.rs
+index 7f8cff9c3e44..d228a98688be 100644
+--- a/helix-view/src/editor.rs
++++ b/helix-view/src/editor.rs
+@@ -1,6 +1,7 @@
+ use crate::{
+     annotations::diagnostics::{DiagnosticFilter, InlineDiagnosticsConfig},
+     clipboard::ClipboardProvider,
++    commands::custom::CustomTypeableCommands,
+     document::{
+         DocumentOpenError, DocumentSavedEventFuture, DocumentSavedEventResult, Mode, SavePoint,
+     },
+@@ -427,6 +428,9 @@ pub struct Config {
+     pub rainbow_brackets: bool,
+     /// Whether to enable Kitty Keyboard Protocol
+     pub kitty_keyboard_protocol: KittyKeyboardProtocolConfig,
++    /// Custom typable commands
++    #[serde(skip)]
++    pub commands: CustomTypeableCommands,
+ }
+ 
+ #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
+@@ -1118,6 +1122,7 @@ impl Default for Config {
+             editor_config: true,
+             rainbow_brackets: false,
+             kitty_keyboard_protocol: Default::default(),
++            commands: CustomTypeableCommands::default(),
+         }
+     }
+ }
+diff --git a/helix-view/src/expansion.rs b/helix-view/src/expansion.rs
+index 6a41ae43894e..ac7b026894da 100644
+--- a/helix-view/src/expansion.rs
++++ b/helix-view/src/expansion.rs
+@@ -97,7 +97,11 @@ impl Variable {
+ ///
+ /// Note that the lifetime of the expanded variable is only bound to the input token and not the
+ /// `Editor`. See `expand_variable` below for more discussion of lifetimes.
+-pub fn expand<'a>(editor: &Editor, token: Token<'a>) -> Result<Cow<'a, str>> {
++pub fn expand<'a>(
++    editor: &Editor,
++    token: Token<'a>,
++    posargs: &[Cow<'a, str>],
++) -> Result<Cow<'a, str>> {
+     // Note: see the `TokenKind` documentation for more details on how each branch should expand.
+     match token.kind {
+         TokenKind::Unquoted | TokenKind::Quoted(_) => Ok(token.content),
+@@ -120,8 +124,10 @@ pub fn expand<'a>(editor: &Editor, token: Token<'a>) -> Result<Cow<'a, str>> {
+                 ))
+             }
+         }
+-        TokenKind::Expand => expand_inner(editor, token.content),
+-        TokenKind::Expansion(ExpansionKind::Shell) => expand_shell(editor, token.content),
++        TokenKind::Expand => expand_inner(editor, token.content, posargs),
++        TokenKind::Expansion(ExpansionKind::Shell) => expand_shell(editor, token.content, posargs),
++        TokenKind::Expansion(ExpansionKind::Arg) => expand_arg(&token.content, posargs),
++
+         // Note: see the docs for this variant.
+         TokenKind::ExpansionKind => unreachable!(
+             "expansion name tokens cannot be emitted when command line validation is enabled"
+@@ -129,12 +135,38 @@ pub fn expand<'a>(editor: &Editor, token: Token<'a>) -> Result<Cow<'a, str>> {
+     }
+ }
+ 
++/// Expands the given command line token for only `%arg{}`'s.
++///
++/// Note that the lifetime of the expanded variable is only bound to the input token and not the
++/// `Editor`. See `expand_variable` below for more discussion of lifetimes.
++#[inline]
++pub fn expand_only_arg<'a>(token: Token<'a>, posargs: &[Cow<'a, str>]) -> Result<Cow<'a, str>> {
++    // Note: see the `TokenKind` documentation for more details on how each branch should expand.
++    match token.kind {
++        TokenKind::Expansion(ExpansionKind::Arg) => expand_arg(&token.content, posargs),
++        _ => Ok(token.content),
++    }
++}
++
++/// Expand a positional argument.
++#[inline]
++pub fn expand_arg<'a>(content: &Cow<'a, str>, args: &[Cow<'a, str>]) -> Result<Cow<'a, str>> {
++    Ok(args
++        .get(content.parse::<usize>()?)
++        .cloned()
++        .unwrap_or_default())
++}
++
+ /// Expand a shell command.
+-pub fn expand_shell<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, str>> {
++pub fn expand_shell<'a>(
++    editor: &Editor,
++    content: Cow<'a, str>,
++    posargs: &[Cow<'a, str>],
++) -> Result<Cow<'a, str>> {
+     use std::process::{Command, Stdio};
+ 
+     // Recursively expand the expansion's content before executing the shell command.
+-    let content = expand_inner(editor, content)?;
++    let content = expand_inner(editor, content, posargs)?;
+ 
+     let config = editor.config();
+     let shell = &config.shell;
+@@ -178,7 +210,11 @@ pub fn expand_shell<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a
+ }
+ 
+ /// Expand a token's contents recursively.
+-fn expand_inner<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, str>> {
++fn expand_inner<'a>(
++    editor: &Editor,
++    content: Cow<'a, str>,
++    posargs: &[Cow<'a, str>],
++) -> Result<Cow<'a, str>> {
+     let mut escaped = String::new();
+     let mut start = 0;
+ 
+@@ -200,7 +236,7 @@ fn expand_inner<'a>(editor: &Editor, content: Cow<'a, str>) -> Result<Cow<'a, st
+                 .unwrap()
+                 .map_err(|err| anyhow!("{err}"))?;
+             // expand it (this is the recursive part),
+-            let expanded = expand(editor, token)?;
++            let expanded = expand(editor, token, posargs)?;
+             escaped.push_str(expanded.as_ref());
+             // and move forward to the end of the expansion.
+             start = idx + tokenizer.pos();
+diff --git a/helix-view/src/lib.rs b/helix-view/src/lib.rs
+index a7e9f4618c91..e5394de2cb71 100644
+--- a/helix-view/src/lib.rs
++++ b/helix-view/src/lib.rs
+@@ -3,6 +3,7 @@ pub mod macros;
+ 
+ pub mod annotations;
+ pub mod clipboard;
++pub mod commands;
+ pub mod document;
+ pub mod editor;
+ pub mod events;
+
+From 25760e8599a9359327d8536a06714b54cc3d2ea7 Mon Sep 17 00:00:00 2001
+From: Rolo <roloedits@gmail.com>
+Date: Sun, 30 Mar 2025 23:10:01 -0700
+Subject: [PATCH 2/2] feat(docs): add documentation for custom commands
+
+---
+ book/src/SUMMARY.md         |   1 +
+ book/src/custom-commands.md | 105 ++++++++++++++++++++++++++++++++++++
+ book/src/remapping.md       |   4 --
+ 3 files changed, 106 insertions(+), 4 deletions(-)
+ create mode 100644 book/src/custom-commands.md
+
+diff --git a/book/src/SUMMARY.md b/book/src/SUMMARY.md
+index e6bc5b735720..56d939b834de 100644
+--- a/book/src/SUMMARY.md
++++ b/book/src/SUMMARY.md
+@@ -23,6 +23,7 @@
+   - [Editor](./editor.md)
+   - [Themes](./themes.md)
+   - [Key remapping](./remapping.md)
++  - [Custom commands](./custom-commands.md)
+   - [Languages](./languages.md)
+ - [Guides](./guides/README.md)
+   - [Adding languages](./guides/adding_languages.md)
+diff --git a/book/src/custom-commands.md b/book/src/custom-commands.md
+new file mode 100644
+index 000000000000..ca6c8c34e7dd
+--- /dev/null
++++ b/book/src/custom-commands.md
+@@ -0,0 +1,105 @@
++# Custom Commands
++
++There are three kinds of commands that can be used in custom commands:
++
++* Static commands: commands like `move_char_right` which are usually bound to
++  keys and used for movement and editing. A list of static commands is
++  available in the [Keymap](./keymap.html) documentation and in the source code
++  in [`helix-term/src/commands.rs`](https://github.com/helix-editor/helix/blob/master/helix-term/src/commands.rs)
++  at the invocation of `static_commands!` macro.
++* Typable commands: commands that can be executed from command mode (`:`), for
++  example `:write!`. See the [Commands](./commands.html) documentation for a
++  list of available typeable commands or the `TypableCommandList` declaration in
++  the source code at [`helix-term/src/commands/typed.rs`](https://github.com/helix-editor/helix/blob/master/helix-term/src/commands/typed.rs).
++* Macros: sequences of keys that are executed in order. These keybindings
++  start with `@` and then list any number of keys to be executed. For example
++  `@miw` can be used to select the surrounding word. For now, macro keybindings
++  are not allowed in sequences due to limitations in the way that
++  command sequences are executed. Modifier keys (e.g. Alt+o) can be used
++  like `"<A-o>"`, e.g. `"@miw<A-o>"`
++
++To remap commands, create a `config.toml` file in your `helix` configuration
++directory (default `~/.config/helix` on Linux systems) with a structure like
++this:
++
++```toml
++[commands]
++":wcb" = [":write", ":buffer-close"] # Maps `:wcb` to write the current buffer and then close it
++":f" = ":format" # Maps `:f` to format the current buffer
++":W" = ":write!" # Maps `:W` to forcefully save the current buffer
++":Q" = ":quit!" # Maps `:Q` to forcefully quit helix
++":hints" = ":toggle lsp.display-inlay-hints" # Maps `:hints` to toggle inlay hints
++```
++
++## Shadowing Built-in Commands
++
++If you redefine a built-in command but still need access to the original, prefix the command with `^` when entering it.
++
++Example:
++
++```toml
++[commands]
++":w" = ":write!" # Force save
++```
++
++To invoke the original behavior:
++
++```
++:^w
++```
++
++This executes the original `:write` command instead of the remapped one.
++
++## Visibility
++
++By default, custom commands appear in the command list. If you prefer to keep them hidden, omit the `:` prefix:
++
++```toml
++[commands]
++"0" = ":goto 1" # `:0` moves to the first line
++```
++
++Even though `:0` can still be used, it won't appear in the command list.
++
++## Positional Arguments
++
++To pass arguments to an underlying command, use `%arg`:
++
++```toml
++[commands]
++":cc" = ":pipe xargs ccase --to %arg{0}"
++```
++
++Example usage:
++
++```
++:cc snake
++```
++
++This executes: `:pipe xargs ccase --to snake`.
++
++- `%arg` uses zero-based indexing (`%arg{0}`, `%arg{1}`, etc.).
++- Valid argument brace syntax follows the [Command Line](./command-line.html) conventions.
++
++## Descriptions and Prompts
++
++To provide descriptions for custom commands, use optional fields:
++
++```toml
++[commands.":wcd!"]
++commands = [":write! %arg(0)", ":cd %sh{ %arg(0) | path dirname }"]
++desc = "Force save buffer, then change directory"
++accepts = "<path>"
++```
++
++## Command Completion
++
++To enable autocompletion for a custom command, assign it an existing completer:
++
++```toml
++[commands.":touch"]
++commands = [":noop %sh{ touch %arg{0} }"]
++completer = ":write"
++```
++
++This allows `:touch` to inherit `:write`'s file path completion.
+diff --git a/book/src/remapping.md b/book/src/remapping.md
+index 9a9a611aea20..2386c8458774 100644
+--- a/book/src/remapping.md
++++ b/book/src/remapping.md
+@@ -1,9 +1,5 @@
+ ## Key remapping
+ 
+-Helix currently supports one-way key remapping through a simple TOML configuration
+-file. (More powerful solutions such as rebinding via commands will be
+-available in the future).
+-
+ There are three kinds of commands that can be used in keymaps:
+ 
+ * Static commands: commands like `move_char_right` which are usually bound to
+

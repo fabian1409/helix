@@ -1,0 +1,101 @@
+From 52bf5e94898bb10de22a4142f08470993151e5c8 Mon Sep 17 00:00:00 2001
+From: Cameron Dugan <me@camerondugan.com>
+Date: Sun, 16 Nov 2025 13:23:30 -0500
+Subject: [PATCH] global language servers (#12721)
+
+---
+ helix-core/src/config.rs        | 14 ++++++++++----
+ helix-core/src/syntax/config.rs | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 42 insertions(+), 4 deletions(-)
+
+diff --git a/helix-core/src/config.rs b/helix-core/src/config.rs
+index 559aa2cb8492..6af515d9774c 100644
+--- a/helix-core/src/config.rs
++++ b/helix-core/src/config.rs
+@@ -2,9 +2,11 @@ use crate::syntax::{config::Configuration, Loader, LoaderError};
+ 
+ /// Language configuration based on built-in languages.toml.
+ pub fn default_lang_config() -> Configuration {
+-    helix_loader::config::default_lang_config()
++    let mut config: Configuration = helix_loader::config::default_lang_config()
+         .try_into()
+-        .expect("Could not deserialize built-in languages.toml")
++        .expect("Could not deserialize built-in languages.toml");
++    config.apply_global_language_servers();
++    config
+ }
+ 
+ /// Language configuration loader based on built-in languages.toml.
+@@ -31,15 +33,19 @@ impl std::error::Error for LanguageLoaderError {}
+ 
+ /// Language configuration based on user configured languages.toml.
+ pub fn user_lang_config() -> Result<Configuration, toml::de::Error> {
+-    helix_loader::config::user_lang_config()?.try_into()
++    let mut config: Configuration = helix_loader::config::user_lang_config()?.try_into()?;
++    config.apply_global_language_servers();
++    Ok(config)
+ }
+ 
+ /// Language configuration loader based on user configured languages.toml.
+ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
+-    let config: Configuration = helix_loader::config::user_lang_config()
++    let mut config: Configuration = helix_loader::config::user_lang_config()
+         .map_err(LanguageLoaderError::DeserializeError)?
+         .try_into()
+         .map_err(LanguageLoaderError::DeserializeError)?;
+ 
++    config.apply_global_language_servers();
++
+     Loader::new(config).map_err(LanguageLoaderError::LoaderError)
+ }
+diff --git a/helix-core/src/syntax/config.rs b/helix-core/src/syntax/config.rs
+index d2e03078a918..dbdce6ae50e9 100644
+--- a/helix-core/src/syntax/config.rs
++++ b/helix-core/src/syntax/config.rs
+@@ -18,6 +18,36 @@ pub struct Configuration {
+     pub language: Vec<LanguageConfiguration>,
+     #[serde(default)]
+     pub language_server: HashMap<String, LanguageServerConfiguration>,
++    #[serde(default)]
++    pub global_language_servers: Vec<String>,
++}
++
++impl Configuration {
++    pub fn apply_global_language_servers(&mut self) {
++        for lang_config in &mut self.language {
++            if lang_config.ignore_global_language_servers {
++                continue;
++            }
++
++            // Collect existing language server names for the current language
++            let existing_server_names: HashSet<String> = lang_config
++                .language_servers
++                .iter()
++                .map(|lsf| lsf.name.clone())
++                .collect();
++
++            for global_server_name in &self.global_language_servers {
++                // Only add if it's not already in the language's specific list
++                if !existing_server_names.contains(global_server_name) {
++                    lang_config.language_servers.push(LanguageServerFeatures {
++                        name: global_server_name.clone(),
++                        only: HashSet::new(),
++                        excluded: HashSet::new(),
++                    });
++                }
++            }
++        }
++    }
+ }
+ 
+ #[derive(Debug, Serialize, Deserialize)]
+@@ -37,6 +67,8 @@ pub struct LanguageConfiguration {
+     pub shebangs: Vec<String>, // interpreter(s) associated with language
+     #[serde(default)]
+     pub roots: Vec<String>, // these indicate project roots <.git, Cargo.toml>
++    #[serde(default)]
++    pub ignore_global_language_servers: bool, // if global language servers are applied to this language
+     #[serde(
+         default,
+         skip_serializing,
+
