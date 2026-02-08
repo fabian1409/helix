@@ -1,0 +1,450 @@
+From a91b5b80e98df92b90ed205efaae7a82926434cc Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Matou=C5=A1=20Dzivjak?= <matousdzivjak@gmail.com>
+Date: Sat, 31 Jan 2026 18:02:42 +0100
+Subject: [PATCH] feat(lsp): automatic document highlight
+
+Add configuration option to enable automatic document highlight[^ref].
+For most LSPs that support this feature it means that other usage
+of the symbol under cursor would get highlighted as well.
+
+We already had most of the infrastructure for this feature
+which is currently used for `Select symbol references` (`space+h`
+by default).
+
+[^ref]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_documentHighlight
+---
+ book/src/editor.md                            |   1 +
+ helix-term/src/handlers.rs                    |   2 +
+ helix-term/src/handlers/document_highlight.rs | 195 ++++++++++++++++++
+ helix-term/src/ui/editor.rs                   |  26 +++
+ helix-view/src/document.rs                    |  71 +++++++
+ helix-view/src/editor.rs                      |   3 +
+ 6 files changed, 298 insertions(+)
+ create mode 100644 helix-term/src/handlers/document_highlight.rs
+
+diff --git a/book/src/editor.md b/book/src/editor.md
+index 3c05965ac98b..2ed74edd725e 100644
+--- a/book/src/editor.md
++++ b/book/src/editor.md
+@@ -165,6 +165,7 @@ The following statusline elements can be configured:
+ | `display-messages`    | Display LSP `window/showMessage` messages below statusline[^1] | `true` |
+ | `display-progress-messages` | Display LSP progress messages below statusline[^1]    | `false` |
+ | `auto-signature-help` | Enable automatic popup of signature help (parameter hints)  | `true`  |
++| `auto-document-highlight` | Automatically highlight symbol references at the cursor | `false` |
+ | `display-inlay-hints` | Display inlay hints[^2]                                     | `false` |
+ | `inlay-hints-length-limit` | Maximum displayed length (non-zero number) of inlay hints | Unset by default  |
+ | `display-color-swatches` | Show color swatches next to colors | `true` |
+diff --git a/helix-term/src/handlers.rs b/helix-term/src/handlers.rs
+index 18297bfea104..ff99e7fd0918 100644
+--- a/helix-term/src/handlers.rs
++++ b/helix-term/src/handlers.rs
+@@ -18,6 +18,7 @@ mod auto_save;
+ pub mod completion;
+ pub mod diagnostics;
+ mod document_colors;
++mod document_highlight;
+ mod prompt;
+ mod signature_help;
+ mod snippet;
+@@ -46,6 +47,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+     helix_view::handlers::register_hooks(&handlers);
+     completion::register_hooks(&handlers);
+     signature_help::register_hooks(&handlers);
++    document_highlight::register_hooks(&handlers);
+     auto_save::register_hooks(&handlers);
+     diagnostics::register_hooks(&handlers);
+     snippet::register_hooks(&handlers);
+diff --git a/helix-term/src/handlers/document_highlight.rs b/helix-term/src/handlers/document_highlight.rs
+new file mode 100644
+index 000000000000..324032481650
+--- /dev/null
++++ b/helix-term/src/handlers/document_highlight.rs
+@@ -0,0 +1,195 @@
++use helix_core::syntax::config::LanguageServerFeature;
++use helix_event::{cancelable_future, register_hook};
++use helix_lsp::{lsp, util::lsp_range_to_range, OffsetEncoding};
++use helix_view::{
++    events::{
++        ConfigDidChange, DocumentDidChange, DocumentDidOpen, LanguageServerExited,
++        LanguageServerInitialized, SelectionDidChange,
++    },
++    handlers::Handlers,
++    DocumentId, Editor, ViewId,
++};
++
++use crate::job;
++
++fn request_document_highlights(editor: &mut Editor, doc_id: DocumentId, view_id: ViewId) {
++    if !editor.config().lsp.auto_document_highlight {
++        return;
++    }
++
++    let Some(doc) = editor.document_mut(doc_id) else {
++        return;
++    };
++
++    doc.ensure_view_init(view_id);
++
++    let Some(language_server) = doc
++        .language_servers_with_feature(LanguageServerFeature::DocumentHighlight)
++        .next()
++    else {
++        doc.clear_document_highlights(view_id);
++        return;
++    };
++
++    let offset_encoding = language_server.offset_encoding();
++    let pos = doc.position(view_id, offset_encoding);
++    let Some(future) =
++        language_server.text_document_document_highlight(doc.identifier(), pos, None)
++    else {
++        doc.clear_document_highlights(view_id);
++        return;
++    };
++
++    let text = doc.text().clone();
++    let cancel = doc.document_highlight_controller(view_id).restart();
++
++    tokio::spawn(async move {
++        let response = match cancelable_future(future, &cancel).await {
++            Some(Ok(response)) => response,
++            Some(Err(err)) => {
++                log::error!("document highlight request failed: {err}");
++                return;
++            }
++            None => return,
++        };
++
++        let ranges = response
++            .map(|highlights| document_highlight_ranges(&text, offset_encoding, highlights))
++            .unwrap_or_default();
++
++        job::dispatch(move |editor, _| {
++            apply_document_highlights(editor, doc_id, view_id, ranges);
++        })
++        .await;
++    });
++}
++
++fn document_highlight_ranges(
++    text: &helix_core::Rope,
++    offset_encoding: OffsetEncoding,
++    highlights: Vec<lsp::DocumentHighlight>,
++) -> Vec<std::ops::Range<usize>> {
++    let slice = text.slice(..);
++    let mut ranges: Vec<_> = highlights
++        .into_iter()
++        .filter_map(|highlight| lsp_range_to_range(text, highlight.range, offset_encoding))
++        .map(|range| range.min_width_1(slice))
++        .filter_map(|range| {
++            let start = range.from();
++            let end = range.to();
++            (start < end).then_some(start..end)
++        })
++        .collect();
++
++    ranges.sort_by(|a, b| (a.start, a.end).cmp(&(b.start, b.end)));
++
++    let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(ranges.len());
++    for range in ranges {
++        if let Some(last) = merged.last_mut() {
++            if range.start <= last.end {
++                if range.end > last.end {
++                    last.end = range.end;
++                }
++                continue;
++            }
++        }
++        merged.push(range);
++    }
++
++    merged
++}
++
++fn apply_document_highlights(
++    editor: &mut Editor,
++    doc_id: DocumentId,
++    view_id: ViewId,
++    ranges: Vec<std::ops::Range<usize>>,
++) {
++    if !editor.config().lsp.auto_document_highlight {
++        return;
++    }
++
++    let Some(doc) = editor.document_mut(doc_id) else {
++        return;
++    };
++
++    if !doc.has_language_server_with_feature(LanguageServerFeature::DocumentHighlight) {
++        doc.clear_document_highlights(view_id);
++        return;
++    }
++
++    if ranges.is_empty() {
++        doc.clear_document_highlights(view_id);
++        return;
++    }
++
++    doc.set_document_highlights(view_id, ranges);
++}
++
++pub(super) fn register_hooks(_handlers: &Handlers) {
++    register_hook!(move |event: &mut SelectionDidChange<'_>| {
++        if event.doc.config.load().lsp.auto_document_highlight {
++            let doc_id = event.doc.id();
++            let view_id = event.view;
++            job::dispatch_blocking(move |editor, _| {
++                request_document_highlights(editor, doc_id, view_id);
++            });
++        }
++        Ok(())
++    });
++
++    register_hook!(move |event: &mut DocumentDidOpen<'_>| {
++        if !event.editor.config().lsp.auto_document_highlight {
++            return Ok(());
++        }
++        let view_id = event.editor.tree.focus;
++        if event.editor.tree.try_get(view_id).is_none() {
++            return Ok(());
++        }
++        request_document_highlights(event.editor, event.doc, view_id);
++        Ok(())
++    });
++
++    register_hook!(move |event: &mut DocumentDidChange<'_>| {
++        if event.doc.config.load().lsp.auto_document_highlight && !event.ghost_transaction {
++            let doc_id = event.doc.id();
++            let view_id = event.view;
++            job::dispatch_blocking(move |editor, _| {
++                request_document_highlights(editor, doc_id, view_id);
++            });
++        }
++        Ok(())
++    });
++
++    register_hook!(move |event: &mut LanguageServerInitialized<'_>| {
++        if !event.editor.config().lsp.auto_document_highlight {
++            return Ok(());
++        }
++        let view_id = event.editor.tree.focus;
++        let Some(view) = event.editor.tree.try_get(view_id) else {
++            return Ok(());
++        };
++        let doc_id = view.doc;
++        request_document_highlights(event.editor, doc_id, view_id);
++        Ok(())
++    });
++
++    register_hook!(move |event: &mut LanguageServerExited<'_>| {
++        for doc in event.editor.documents_mut() {
++            if doc.supports_language_server(event.server_id) {
++                doc.clear_all_document_highlights();
++            }
++        }
++        Ok(())
++    });
++
++    register_hook!(move |event: &mut ConfigDidChange<'_>| {
++        if event.new.lsp.auto_document_highlight {
++            return Ok(());
++        }
++        for doc in event.editor.documents_mut() {
++            doc.clear_all_document_highlights();
++        }
++        Ok(())
++    });
++}
+diff --git a/helix-term/src/ui/editor.rs b/helix-term/src/ui/editor.rs
+index b25af107d796..6ec039e98115 100644
+--- a/helix-term/src/ui/editor.rs
++++ b/helix-term/src/ui/editor.rs
+@@ -142,6 +142,11 @@ impl EditorView {
+         Self::doc_diagnostics_highlights_into(doc, theme, &mut overlays);
+ 
+         if is_focused {
++            if config.lsp.auto_document_highlight {
++                if let Some(overlay) = Self::doc_document_highlights(doc, view, theme) {
++                    overlays.push(overlay);
++                }
++            }
+             if let Some(tabstops) = Self::tabstop_highlights(doc, theme) {
+                 overlays.push(tabstops);
+             }
+@@ -459,6 +464,27 @@ impl EditorView {
+         ]);
+     }
+ 
++    pub fn doc_document_highlights(
++        doc: &Document,
++        view: &View,
++        theme: &Theme,
++    ) -> Option<OverlayHighlights> {
++        let ranges = doc.document_highlights(view.id)?;
++        if ranges.is_empty() {
++            return None;
++        }
++
++        let highlight = theme
++            .find_highlight_exact("ui.highlight")
++            .or_else(|| theme.find_highlight_exact("ui.selection"))
++            .or_else(|| theme.find_highlight_exact("ui.cursor"))?;
++
++        Some(OverlayHighlights::Homogeneous {
++            highlight,
++            ranges: ranges.to_vec(),
++        })
++    }
++
+     /// Get highlight spans for selections in a document view.
+     pub fn doc_selection_highlights(
+         mode: Mode,
+diff --git a/helix-view/src/document.rs b/helix-view/src/document.rs
+index ef949613f6ce..6323c2fd4a6f 100644
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -149,7 +149,10 @@ pub struct Document {
+     ///
+     /// To know if they're up-to-date, check the `id` field in `DocumentInlayHints`.
+     pub(crate) inlay_hints: HashMap<ViewId, DocumentInlayHints>,
++    /// Jump label overlays for each view.
+     pub(crate) jump_labels: HashMap<ViewId, Vec<Overlay>>,
++    /// LSP document highlights for each view, stored as char ranges.
++    pub(crate) document_highlights: HashMap<ViewId, DocumentHighlights>,
+     /// Set to `true` when the document is updated, reset to `false` on the next inlay hints
+     /// update from the LSP
+     pub inlay_hints_oudated: bool,
+@@ -211,6 +214,8 @@ pub struct Document {
+     // NOTE: ideally this would live on the handler for color swatches. This is blocked on a
+     // large refactor that would make `&mut Editor` available on the `DocumentDidChange` event.
+     pub color_swatch_controller: TaskController,
++    /// Per-view task controllers for canceling in-flight document highlight requests.
++    pub document_highlight_controllers: HashMap<ViewId, TaskController>,
+     pub pull_diagnostic_controller: TaskController,
+ 
+     // NOTE: this field should eventually go away - we should use the Editor's syn_loader instead
+@@ -226,6 +231,12 @@ pub struct DocumentColorSwatches {
+     pub color_swatches_padding: Vec<InlineAnnotation>,
+ }
+ 
++/// Highlight ranges returned by LSP `textDocument/documentHighlight` for a view.
++#[derive(Debug, Clone, Default)]
++pub struct DocumentHighlights {
++    pub ranges: Vec<std::ops::Range<usize>>,
++}
++
+ /// Inlay hints for a single `(Document, View)` combo.
+ ///
+ /// There are `*_inlay_hints` field for each kind of hints an LSP can send since we offer the
+@@ -728,8 +739,10 @@ impl Document {
+             focused_at: std::time::Instant::now(),
+             readonly: false,
+             jump_labels: HashMap::new(),
++            document_highlights: HashMap::new(),
+             color_swatches: None,
+             color_swatch_controller: TaskController::new(),
++            document_highlight_controllers: HashMap::new(),
+             syn_loader,
+             previous_diagnostic_id: None,
+             pull_diagnostic_controller: TaskController::new(),
+@@ -1376,6 +1389,8 @@ impl Document {
+         self.selections.remove(&view_id);
+         self.inlay_hints.remove(&view_id);
+         self.jump_labels.remove(&view_id);
++        self.document_highlights.remove(&view_id);
++        self.document_highlight_controllers.remove(&view_id);
+     }
+ 
+     /// Apply a [`Transaction`] to the [`Document`] to change its text.
+@@ -1527,6 +1542,28 @@ impl Document {
+             apply_inlay_hint_changes(padding_after_inlay_hints);
+         }
+ 
++        for highlights in self.document_highlights.values_mut() {
++            let text_len = self.text.len_chars();
++            let mut updated = Vec::with_capacity(highlights.ranges.len());
++            for mut range in highlights.ranges.drain(..) {
++                changes.update_positions(
++                    [
++                        (&mut range.start, Assoc::After),
++                        (&mut range.end, Assoc::After),
++                    ]
++                    .into_iter(),
++                );
++                if range.start >= text_len {
++                    continue;
++                }
++                let end = range.end.min(text_len);
++                if range.start < end {
++                    updated.push(range.start..end);
++                }
++            }
++            highlights.ranges = updated;
++        }
++
+         helix_event::dispatch(DocumentDidChange {
+             doc: self,
+             view: view_id,
+@@ -2293,6 +2330,40 @@ impl Document {
+         self.jump_labels.remove(&view_id);
+     }
+ 
++    pub fn set_document_highlights(
++        &mut self,
++        view_id: ViewId,
++        ranges: Vec<std::ops::Range<usize>>,
++    ) {
++        if ranges.is_empty() {
++            self.document_highlights.remove(&view_id);
++        } else {
++            self.document_highlights
++                .insert(view_id, DocumentHighlights { ranges });
++        }
++    }
++
++    pub fn clear_document_highlights(&mut self, view_id: ViewId) {
++        self.document_highlights.remove(&view_id);
++    }
++
++    pub fn clear_all_document_highlights(&mut self) {
++        self.document_highlights.clear();
++        self.document_highlight_controllers.clear();
++    }
++
++    pub fn document_highlights(&self, view_id: ViewId) -> Option<&[std::ops::Range<usize>]> {
++        self.document_highlights
++            .get(&view_id)
++            .map(|highlights| highlights.ranges.as_slice())
++    }
++
++    pub fn document_highlight_controller(&mut self, view_id: ViewId) -> &mut TaskController {
++        self.document_highlight_controllers
++            .entry(view_id)
++            .or_default()
++    }
++
+     /// Get the inlay hints for this document and `view_id`.
+     pub fn inlay_hints(&self, view_id: ViewId) -> Option<&DocumentInlayHints> {
+         self.inlay_hints.get(&view_id)
+diff --git a/helix-view/src/editor.rs b/helix-view/src/editor.rs
+index f3f104076dee..78b36c0bc34c 100644
+--- a/helix-view/src/editor.rs
++++ b/helix-view/src/editor.rs
+@@ -549,6 +549,8 @@ pub struct LspConfig {
+     pub display_signature_help_docs: bool,
+     /// Display inlay hints
+     pub display_inlay_hints: bool,
++    /// Automatically highlight symbol references at the cursor.
++    pub auto_document_highlight: bool,
+     /// Maximum displayed length of inlay hints (excluding the added trailing `…`).
+     /// If it's `None`, there's no limit
+     pub inlay_hints_length_limit: Option<NonZeroU8>,
+@@ -569,6 +571,7 @@ impl Default for LspConfig {
+             auto_signature_help: true,
+             display_signature_help_docs: true,
+             display_inlay_hints: false,
++            auto_document_highlight: false,
+             inlay_hints_length_limit: None,
+             snippets: true,
+             goto_reference_include_declaration: true,
+

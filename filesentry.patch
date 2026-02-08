@@ -1,0 +1,3625 @@
+From c255d7277c2e5664d41aeae0b880f169b0adb48d Mon Sep 17 00:00:00 2001
+From: Pascal Kuthe <pascalkuthe@pm.me>
+Date: Fri, 3 Oct 2025 17:50:25 +0200
+Subject: [PATCH 1/4] implement file-watching based on filesentry
+
+---
+ Cargo.lock                             |  65 ++-
+ Cargo.toml                             |   1 +
+ helix-core/Cargo.toml                  |   2 +
+ helix-core/src/file_watcher.rs         | 593 +++++++++++++++++++++++++
+ helix-core/src/lib.rs                  |   1 +
+ helix-lsp/Cargo.toml                   |   1 +
+ helix-lsp/src/file_event.rs            |  98 ++--
+ helix-term/src/commands/typed.rs       |  24 +-
+ helix-term/src/events.rs               |   2 +
+ helix-term/src/handlers.rs             |   4 +-
+ helix-term/src/handlers/auto_reload.rs | 106 +++++
+ helix-term/src/ui/editor.rs            |   2 +
+ helix-view/src/document.rs             |   2 +-
+ helix-view/src/editor.rs               |  44 +-
+ helix-view/src/handlers.rs             |   8 +-
+ helix-view/src/handlers/lsp.rs         |  16 +-
+ 16 files changed, 901 insertions(+), 68 deletions(-)
+ create mode 100644 helix-core/src/file_watcher.rs
+ create mode 100644 helix-term/src/handlers/auto_reload.rs
+
+diff --git a/Cargo.lock b/Cargo.lock
+index e735e3fb0ca2..5b8abc0025af 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -295,6 +295,12 @@ version = "1.0.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+ 
++[[package]]
++name = "ecow"
++version = "0.2.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "78e4f79b296fbaab6ce2e22d52cb4c7f010fe0ebe7a32e34fa25885fd797bd02"
++
+ [[package]]
+ name = "either"
+ version = "1.13.0"
+@@ -395,6 +401,24 @@ dependencies = [
+  "log",
+ ]
+ 
++[[package]]
++name = "filesentry"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "e78347b6abab87ab712230b933994b5611302f82d64747e681477adcf26dedbd"
++dependencies = [
++ "bitflags",
++ "ecow",
++ "hashbrown 0.15.5",
++ "ignore",
++ "log",
++ "memchr",
++ "mio",
++ "papaya",
++ "rustix 1.1.2",
++ "walkdir",
++]
++
+ [[package]]
+ name = "filetime"
+ version = "0.2.25"
+@@ -1347,11 +1371,14 @@ dependencies = [
+  "bitflags",
+  "chrono",
+  "encoding_rs",
++ "filesentry",
+  "foldhash 0.2.0",
+  "globset",
++ "helix-event",
+  "helix-loader",
+  "helix-parsec",
+  "helix-stdx",
++ "ignore",
+  "imara-diff 0.2.0",
+  "indoc",
+  "log",
+@@ -1446,6 +1473,7 @@ dependencies = [
+  "futures-util",
+  "globset",
+  "helix-core",
++ "helix-event",
+  "helix-loader",
+  "helix-lsp-types",
+  "helix-stdx",
+@@ -2008,9 +2036,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "memchr"
+-version = "2.7.4"
++version = "2.7.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
++checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
+ 
+ [[package]]
+ name = "memmap2"
+@@ -2023,15 +2051,14 @@ dependencies = [
+ 
+ [[package]]
+ name = "mio"
+-version = "1.0.2"
++version = "1.0.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "80e04d1dcff3aae0704555fe5fee3bcfaf3d1fdf8a7e521d5b9d2b42acb52cec"
++checksum = "78bed444cc8a2160f01cbcf811ef18cac863ad68ae8ca62092e8db51d51c761c"
+ dependencies = [
+- "hermit-abi",
+  "libc",
+  "log",
+  "wasi 0.11.0+wasi-snapshot-preview1",
+- "windows-sys 0.52.0",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -2111,6 +2138,16 @@ dependencies = [
+  "pathdiff",
+ ]
+ 
++[[package]]
++name = "papaya"
++version = "0.2.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "f92dd0b07c53a0a0c764db2ace8c541dc47320dad97c2200c2a637ab9dd2328f"
++dependencies = [
++ "equivalent",
++ "seize",
++]
++
+ [[package]]
+ name = "parking_lot"
+ version = "0.12.5"
+@@ -2426,7 +2463,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys 0.11.0",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -2456,6 +2493,16 @@ version = "1.2.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+ 
++[[package]]
++name = "seize"
++version = "0.5.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
++dependencies = [
++ "libc",
++ "windows-sys 0.61.1",
++]
++
+ [[package]]
+ name = "serde"
+ version = "1.0.228"
+@@ -2729,7 +2776,7 @@ dependencies = [
+  "getrandom 0.3.1",
+  "once_cell",
+  "rustix 1.1.2",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -2743,7 +2790,7 @@ dependencies = [
+  "parking_lot",
+  "rustix 1.1.2",
+  "signal-hook",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+diff --git a/Cargo.toml b/Cargo.toml
+index 0f1e84366dec..d04e30b76ed7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -56,6 +56,7 @@ termina = "0.1"
+ sonic-rs = "0.5"
+ # MSRV: update once the MSRV is >=1.85
+ globset = "=0.4.16"
++ignore = "0.4"
+ 
+ [workspace.package]
+ version = "25.7.1"
+diff --git a/helix-core/Cargo.toml b/helix-core/Cargo.toml
+index e7e79ea4a064..c07cd4a98cd6 100644
+--- a/helix-core/Cargo.toml
++++ b/helix-core/Cargo.toml
+@@ -18,8 +18,10 @@ integration = []
+ [dependencies]
+ helix-stdx = { path = "../helix-stdx" }
+ helix-loader = { path = "../helix-loader" }
++helix-event = { path = "../helix-event" }
+ helix-parsec = { path = "../helix-parsec" }
+ 
++ignore.workspace = true
+ ropey.workspace = true
+ smallvec = "1.15"
+ smartstring = "1.0.1"
+diff --git a/helix-core/src/file_watcher.rs b/helix-core/src/file_watcher.rs
+new file mode 100644
+index 000000000000..d3d9a678d8a3
+--- /dev/null
++++ b/helix-core/src/file_watcher.rs
+@@ -0,0 +1,593 @@
++use std::borrow::Borrow;
++use std::mem::replace;
++use std::path::{Path, PathBuf};
++use std::slice;
++use std::sync::Arc;
++
++// Re-export filesentry types on Linux
++#[cfg(target_os = "linux")]
++pub use filesentry::{Event, EventType, Events};
++
++// Stub types for non-Linux platforms
++#[cfg(not(target_os = "linux"))]
++#[derive(Debug, Clone)]
++pub struct Event {
++    pub path: PathBuf,
++    pub ty: EventType,
++}
++
++#[cfg(not(target_os = "linux"))]
++impl Event {
++    pub fn as_std_path(&self) -> &Path {
++        &self.path
++    }
++}
++
++#[cfg(not(target_os = "linux"))]
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum EventType {
++    Create,
++    Delete,
++    Modified,
++    Tempfile,
++}
++
++#[cfg(not(target_os = "linux"))]
++pub type Events = std::sync::Arc<[Event]>;
++
++#[cfg(target_os = "linux")]
++use filesentry::{Filter, ShutdownOnDrop};
++use helix_event::{dispatch, events};
++use ignore::gitignore::{Gitignore, GitignoreBuilder};
++use serde::{Deserialize, Serialize};
++
++events! {
++    FileSystemDidChange {
++        fs_events: Events
++    }
++}
++
++/// Config for file watching
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
++pub struct Config {
++    /// Enable file watching enable by default
++    pub enable: bool,
++    pub watch_vcs: bool,
++    /// Only enable the file watcher inside helix workspaces (VCS repos and directories with .helix
++    /// directory) this prevents watching large directories like $HOME by default
++    ///
++    /// Defaults to `true`
++    pub require_workspace: bool,
++    /// Enables ignoring hidden files.
++    /// Whether to hide hidden files in file picker and global search results. Defaults to true.
++    pub hidden: bool,
++    /// Enables reading `.ignore` files.
++    /// Whether to hide files listed in .ignore in file picker and global search results. Defaults to true.
++    pub ignore: bool,
++    /// Enables reading `.gitignore` files.
++    /// Whether to hide files listed in .gitignore in file picker and global search results. Defaults to true.
++    pub git_ignore: bool,
++    /// Enables reading global .gitignore, whose path is specified in git's config: `core.excludefile` option.
++    /// Whether to hide files listed in global .gitignore in file picker and global search results. Defaults to true.
++    pub git_global: bool,
++    // /// Enables reading `.git/info/exclude` files.
++    // /// Whether to hide files listed in .git/info/exclude in file picker and global search results. Defaults to true.
++    // pub git_exclude: bool,
++    /// Maximum Depth to recurse for filewatching
++    pub max_depth: Option<usize>,
++}
++
++impl Default for Config {
++    fn default() -> Self {
++        Config {
++            enable: true,
++            watch_vcs: false,
++            require_workspace: true,
++            hidden: true,
++            ignore: true,
++            git_ignore: true,
++            git_global: true,
++            max_depth: Some(10),
++        }
++    }
++}
++
++// Linux implementation with actual file watching
++#[cfg(target_os = "linux")]
++pub struct Watcher {
++    watcher: Option<(filesentry::Watcher, ShutdownOnDrop)>,
++    filter: Arc<WatchFilter>,
++    roots: Vec<(PathBuf, usize)>,
++    config: Config,
++}
++
++#[cfg(target_os = "linux")]
++impl Watcher {
++    pub fn new(config: &Config) -> Watcher {
++        let mut watcher = Watcher {
++            watcher: None,
++            filter: Arc::new(WatchFilter {
++                filesentry_ignores: Gitignore::empty(),
++                ignore_files: Vec::new(),
++                global_ignores: Vec::new(),
++                hidden: true,
++                watch_vcs: true,
++            }),
++            roots: Vec::new(),
++            config: config.clone(),
++        };
++        watcher.reload(config);
++        watcher
++    }
++
++    pub fn reload(&mut self, config: &Config) {
++        let old_config = replace(&mut self.config, config.clone());
++        let (workspace, no_workspace) = helix_loader::find_workspace();
++        if !config.enable || config.require_workspace && no_workspace {
++            self.watcher = None;
++            return;
++        }
++        self.filter = Arc::new(WatchFilter::new(
++            config,
++            &workspace,
++            self.roots.iter().map(|(it, _)| &**it),
++        ));
++        let watcher = match &mut self.watcher {
++            Some((watcher, _)) => {
++                // TODO: more fine grained detection of when recrawl is nedded
++                watcher.set_filter(self.filter.clone(), old_config != self.config);
++                watcher
++            }
++            None => match filesentry::Watcher::new() {
++                Ok(watcher) => {
++                    watcher.set_filter(self.filter.clone(), false);
++                    watcher.add_handler(move |events| {
++                        dispatch(FileSystemDidChange { fs_events: events });
++                        true
++                    });
++                    let shutdown_guard = watcher.shutdown_guard();
++                    &mut self.watcher.insert((watcher, shutdown_guard)).0
++                }
++                Err(err) => {
++                    log::error!("failed to start file-watcher: {err}");
++                    return;
++                }
++            },
++        };
++        if let Err(err) = watcher.add_root(&workspace, true, |_| ()) {
++            log::error!("failed to start file-watcher: {err}");
++        }
++        for (root, _) in &self.roots {
++            if let Err(err) = watcher.add_root(root, true, |_| ()) {
++                log::error!("failed to start file-watcher: {err}");
++            }
++        }
++        watcher.start();
++    }
++
++    pub fn remove_root(&mut self, root: PathBuf) {
++        let i = self.roots.partition_point(|(it, _)| it < &root);
++        if self.roots.get(i).is_none_or(|(it, _)| it != &root) {
++            log::error!("tried to remove root {root:?} from watch list that does not exist!");
++            return;
++        }
++        if self.roots[i].1 <= 1 {
++            self.roots.remove(i);
++        } else {
++            self.roots[i].1 -= 1;
++        }
++    }
++
++    pub fn add_root(&mut self, root: &Path) {
++        let root = match root.canonicalize() {
++            Ok(root) => root,
++            Err(err) => {
++                log::error!("failed to watch {root:?}: {err}");
++                return;
++            }
++        };
++        let i = self.roots.partition_point(|(it, _)| it < &root);
++        if let Some((_, refcnt)) = self.roots.get_mut(i).filter(|(path, _)| path == &root) {
++            *refcnt += 1;
++            return;
++        }
++        if self.roots[..i]
++            .iter()
++            .rev()
++            .find(|(it, _)| it.parent().is_none_or(|it| root.starts_with(it)))
++            .is_some_and(|(it, _)| root.starts_with(it))
++            && !self.filter.ignore_path_rec(&root, Some(true))
++        {
++            return;
++        }
++        let (workspace, _) = helix_loader::find_workspace();
++        self.roots.push((root.clone(), 1));
++        self.filter = Arc::new(WatchFilter::new(
++            &self.config,
++            &workspace,
++            self.roots.iter().map(|(it, _)| &**it),
++        ));
++        if let Some((watcher, _)) = &self.watcher {
++            watcher.set_filter(self.filter.clone(), false);
++            if let Err(err) = watcher.add_root(&root, true, |_| ()) {
++                log::error!("failed to watch {root:?}: {err}");
++            }
++        }
++    }
++}
++
++// Stub implementation for non-Linux platforms
++#[cfg(not(target_os = "linux"))]
++pub struct Watcher {
++    config: Config,
++}
++
++#[cfg(not(target_os = "linux"))]
++impl Watcher {
++    pub fn new(config: &Config) -> Watcher {
++        Watcher {
++            config: config.clone(),
++        }
++    }
++
++    pub fn reload(&mut self, config: &Config) {
++        self.config = config.clone();
++    }
++
++    pub fn add_root(&mut self, _root: &Path) {
++        // No-op on non-Linux platforms
++    }
++
++    pub fn remove_root(&mut self, _root: PathBuf) {
++        // No-op on non-Linux platforms
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn build_ignore(paths: impl IntoIterator<Item = PathBuf> + Clone, dir: &Path) -> Option<Gitignore> {
++    let mut builder = GitignoreBuilder::new(dir);
++    for path in paths.clone() {
++        if let Some(err) = builder.add(&path) {
++            if !err.is_io() {
++                log::error!("failed to read ignorefile at {path:?}: {err}");
++            }
++        }
++    }
++    match builder.build() {
++        Ok(ignore) => (!ignore.is_empty()).then_some(ignore),
++        Err(err) => {
++            if !err.is_io() {
++                log::error!(
++                    "failed to read ignorefile at {:?}: {err}",
++                    paths.into_iter().collect::<Vec<_>>()
++                );
++            }
++            None
++        }
++    }
++}
++
++#[cfg(target_os = "linux")]
++struct IgnoreFiles {
++    root: PathBuf,
++    ignores: Vec<Arc<Gitignore>>,
++}
++
++#[cfg(target_os = "linux")]
++impl IgnoreFiles {
++    fn new(
++        workspace_ignore: Option<Arc<Gitignore>>,
++        config: &Config,
++        root: &Path,
++        globals: &[Arc<Gitignore>],
++    ) -> Self {
++        let mut ignores = Vec::with_capacity(8);
++        // .helix/ignore
++        if let Some(workspace_ignore) = workspace_ignore {
++            ignores.push(workspace_ignore);
++        }
++        for ancestor in root.ancestors() {
++            let ignore = if config.ignore {
++                if config.git_ignore {
++                    // the second path takes priority
++                    build_ignore(
++                        [ancestor.join(".gitignore"), ancestor.join(".ignore")],
++                        ancestor,
++                    )
++                } else {
++                    build_ignore([ancestor.join(".ignore")], ancestor)
++                }
++            } else if config.git_ignore {
++                build_ignore([ancestor.join(".gitignore")], ancestor)
++            } else {
++                None
++            };
++            if let Some(ignore) = ignore {
++                ignores.push(Arc::new(ignore));
++            }
++        }
++        ignores.extend(globals.iter().cloned());
++        Self {
++            root: root.into(),
++            ignores,
++        }
++    }
++
++    fn shared_ignores(
++        workspace: &Path,
++        config: &Config,
++    ) -> (Vec<Arc<Gitignore>>, Option<Arc<Gitignore>>) {
++        let mut ignores = Vec::new();
++        let workspace_ignore = build_ignore(
++            [
++                helix_loader::config_dir().join("ignore"),
++                workspace.join(".helix/ignore"),
++            ],
++            workspace,
++        )
++        .map(Arc::new);
++        if config.git_global {
++            let (gitignore_global, err) = Gitignore::global();
++            if let Some(err) = err {
++                if !err.is_io() {
++                    log::error!("failed to read global global ignorefile: {err}");
++                }
++            }
++            if !gitignore_global.is_empty() {
++                ignores.push(Arc::new(gitignore_global));
++            }
++        }
++        // if config.git_exclude {
++        // TODO git_exclude implementation, this isn't quite trivial unfortunaetly
++        // due to detached workspace etc.
++        // }
++        // TODO: git exclude
++        (ignores, workspace_ignore)
++    }
++
++    fn filesentry_ignores(workspace: &Path) -> Gitignore {
++        // the second path takes priority
++        build_ignore(
++            [
++                helix_loader::config_dir().join("filesentryignore"),
++                workspace.join(".helix/filesentryignore"),
++            ],
++            workspace,
++        )
++        .unwrap_or(Gitignore::empty())
++    }
++
++    fn is_ignored(
++        ignores: &[impl Borrow<Gitignore>],
++        path: &Path,
++        is_dir: Option<bool>,
++    ) -> Option<bool> {
++        match is_dir {
++            Some(is_dir) => {
++                for ignore in ignores {
++                    match ignore.borrow().matched(path, is_dir) {
++                        ignore::Match::None => continue,
++                        ignore::Match::Ignore(_) => return Some(true),
++                        ignore::Match::Whitelist(_) => return Some(false),
++                    }
++                }
++            }
++            None => {
++                // if we don't know wether this is a directory (on windows)
++                // then we are conservative and allow the dirs
++                for ignore in ignores {
++                    match ignore.borrow().matched(path, true) {
++                        ignore::Match::None => continue,
++                        ignore::Match::Ignore(glob) => {
++                            if glob.is_only_dir() {
++                                match ignore.borrow().matched(path, false) {
++                                    ignore::Match::None => continue,
++                                    ignore::Match::Ignore(_) => return Some(true),
++                                    ignore::Match::Whitelist(_) => return Some(false),
++                                }
++                            } else {
++                                return Some(true);
++                            }
++                        }
++                        ignore::Match::Whitelist(_) => return Some(false),
++                    }
++                }
++            }
++        }
++        None
++    }
++}
++
++/// a filter to ignore hiddeng/ingored files. The point of this
++/// is to avoid overwhelming the watcher with watching a ton of
++/// files/directories (like the cargo target directory, node_modules or
++/// VCS files) so ignoring a file is a performance optimization.
++///
++/// By default we ignore ignored
++#[cfg(target_os = "linux")]
++struct WatchFilter {
++    filesentry_ignores: Gitignore,
++    ignore_files: Vec<IgnoreFiles>,
++    global_ignores: Vec<Arc<Gitignore>>,
++    hidden: bool,
++    watch_vcs: bool,
++}
++
++#[cfg(target_os = "linux")]
++impl WatchFilter {
++    fn new<'a>(
++        config: &Config,
++        workspace: &'a Path,
++        roots: impl Iterator<Item = &'a Path> + Clone,
++    ) -> WatchFilter {
++        let filesentry_ignores = IgnoreFiles::filesentry_ignores(workspace);
++        let (global_ignores, workspace_ignore) = IgnoreFiles::shared_ignores(workspace, config);
++        let ignore_files = roots
++            .chain([workspace])
++            .map(|root| IgnoreFiles::new(workspace_ignore.clone(), config, root, &global_ignores))
++            .collect();
++        WatchFilter {
++            filesentry_ignores,
++            ignore_files,
++            global_ignores,
++            hidden: config.hidden,
++            watch_vcs: config.watch_vcs,
++        }
++    }
++
++    fn ignore_path_impl(
++        &self,
++        path: &Path,
++        is_dir: Option<bool>,
++        ignore_files: &[Arc<Gitignore>],
++    ) -> bool {
++        if let Some(ignore) =
++            IgnoreFiles::is_ignored(slice::from_ref(&self.filesentry_ignores), path, is_dir)
++        {
++            return ignore;
++        }
++        if is_hardcoded_whitelist(path) {
++            return false;
++        }
++        if is_hardcoded_blacklist(path, is_dir.unwrap_or(false)) {
++            return true;
++        }
++        if let Some(ignore) = IgnoreFiles::is_ignored(ignore_files, path, is_dir) {
++            return ignore;
++        }
++        // ignore .git dircectory except .git/HEAD (and .git itself)
++        if is_vcs_ignore(path, self.watch_vcs) {
++            return true;
++        }
++        !self.hidden && is_hidden(path)
++    }
++}
++
++#[cfg(target_os = "linux")]
++impl filesentry::Filter for WatchFilter {
++    fn ignore_path(&self, path: &Path, is_dir: Option<bool>) -> bool {
++        let i = self
++            .ignore_files
++            .partition_point(|ignore_files| path < ignore_files.root);
++        let (root, ignore_files) = self
++            .ignore_files
++            .get(i)
++            .map_or((Path::new(""), &self.global_ignores), |files| {
++                (&files.root, &files.ignores)
++            });
++        if path == root {
++            return false;
++        }
++        self.ignore_path_impl(path, is_dir, ignore_files)
++    }
++
++    fn ignore_path_rec(&self, mut path: &Path, is_dir: Option<bool>) -> bool {
++        let i = self
++            .ignore_files
++            .partition_point(|ignore_files| path < ignore_files.root);
++        let (root, ignore_files) = self
++            .ignore_files
++            .get(i)
++            .map_or((Path::new(""), &self.global_ignores), |files| {
++                (&files.root, &files.ignores)
++            });
++        loop {
++            if path == root {
++                return false;
++            }
++            if self.ignore_path_impl(path, is_dir, ignore_files) {
++                return true;
++            }
++            let Some(parent) = path.parent() else {
++                break;
++            };
++            path = parent;
++        }
++        false
++    }
++}
++
++#[cfg(target_os = "linux")]
++fn is_hidden(path: &Path) -> bool {
++    path.file_name().is_some_and(|it| {
++        it.as_encoded_bytes().first() == Some(&b'.')
++        // handled by vcs ignore rules
++        && it != ".git"
++    })
++}
++
++// hidden directories we want to watch by default
++#[cfg(target_os = "linux")]
++fn is_hardcoded_whitelist(path: &Path) -> bool {
++    path.ends_with(".helix")
++        | path.ends_with(".github")
++        | path.ends_with(".cargo")
++        | path.ends_with(".envrc")
++}
++
++#[cfg(target_os = "linux")]
++fn is_hardcoded_blacklist(path: &Path, is_dir: bool) -> bool {
++    // don't descend into the cargo regstiry and similar
++    path.parent()
++        .is_some_and(|parent| parent.ends_with(".cargo"))
++        && is_dir
++}
++
++#[cfg(target_os = "linux")]
++fn file_name(path: &Path) -> Option<&str> {
++    path.file_name().and_then(|it| it.to_str())
++}
++
++#[cfg(target_os = "linux")]
++fn is_vcs_ignore(path: &Path, watch_vcs: bool) -> bool {
++    // ignore .git directory contents except .git/HEAD (and .git itself)
++    // Note: only checks immediate parent; recursive checking is done by ignore_path_rec
++    if watch_vcs
++        && path.parent().is_some_and(|it| it.ends_with(".git"))
++        && !path.ends_with(".git/HEAD")
++    {
++        return true;
++    }
++    match file_name(path) {
++        Some(".jj" | ".svn" | ".hg") => true,
++        Some(".git") => !watch_vcs,
++        _ => false,
++    }
++}
++
++#[cfg(all(test, target_os = "linux"))]
++mod tests {
++    use std::path::Path;
++
++    use crate::file_watcher::{is_hardcoded_whitelist, is_hidden, is_vcs_ignore};
++
++    #[test]
++    fn test_vcs_ignore() {
++        assert!(!is_vcs_ignore(Path::new(".git"), true));
++        assert!(!is_vcs_ignore(Path::new(".git/HEAD"), true));
++        assert!(is_vcs_ignore(Path::new(".git/foo"), true));
++        // Note: .git/foo/bar is NOT caught by is_vcs_ignore (only checks immediate parent)
++        // but it IS caught by ignore_path_rec which checks ancestors recursively
++        assert!(!is_vcs_ignore(Path::new(".git/foo/bar"), true));
++        assert!(!is_vcs_ignore(Path::new(".foo"), true));
++        assert!(is_vcs_ignore(Path::new(".jj"), true));
++        assert!(is_vcs_ignore(Path::new(".svn"), true));
++        assert!(is_vcs_ignore(Path::new(".hg"), true));
++    }
++
++    #[test]
++    fn test_hidden() {
++        assert!(is_hidden(Path::new(".foo")));
++        // handled by vcs ignore rules
++        assert!(!is_hidden(Path::new(".git")));
++    }
++
++    #[test]
++    fn test_whitelist() {
++        // Note: .git is NOT in whitelist - it has special handling in is_vcs_ignore and is_hidden
++        assert!(is_hardcoded_whitelist(Path::new(".helix")));
++        assert!(is_hardcoded_whitelist(Path::new(".github")));
++        assert!(!is_hardcoded_whitelist(Path::new(".githup")));
++    }
++}
+diff --git a/helix-core/src/lib.rs b/helix-core/src/lib.rs
+index 09865ca40456..1e25eafa8353 100644
+--- a/helix-core/src/lib.rs
++++ b/helix-core/src/lib.rs
+@@ -11,6 +11,7 @@ pub mod diagnostic;
+ pub mod diff;
+ pub mod doc_formatter;
+ pub mod editor_config;
++pub mod file_watcher;
+ pub mod fuzzy;
+ pub mod graphemes;
+ pub mod history;
+diff --git a/helix-lsp/Cargo.toml b/helix-lsp/Cargo.toml
+index 6156be9a956a..5c40aedba665 100644
+--- a/helix-lsp/Cargo.toml
++++ b/helix-lsp/Cargo.toml
+@@ -16,6 +16,7 @@ homepage.workspace = true
+ helix-stdx = { path = "../helix-stdx" }
+ helix-core = { path = "../helix-core" }
+ helix-loader = { path = "../helix-loader" }
++helix-event = { path = "../helix-event" }
+ helix-lsp-types = { path = "../helix-lsp-types" }
+ 
+ anyhow = "1.0"
+diff --git a/helix-lsp/src/file_event.rs b/helix-lsp/src/file_event.rs
+index 5e7f8ca6075f..ccfe45583d56 100644
+--- a/helix-lsp/src/file_event.rs
++++ b/helix-lsp/src/file_event.rs
+@@ -1,14 +1,19 @@
++use std::path::Path;
+ use std::{collections::HashMap, path::PathBuf, sync::Weak};
+ 
+ use globset::{GlobBuilder, GlobSetBuilder};
++use helix_core::file_watcher::{EventType, Events, FileSystemDidChange};
++use helix_event::register_hook;
+ use tokio::sync::mpsc;
+ 
+ use crate::{lsp, Client, LanguageServerId};
+ 
+ enum Event {
+-    FileChanged {
++    /// file written by helix, special cased to not wait on FS
++    FileWritten {
+         path: PathBuf,
+     },
++    FileWatcher(Events),
+     Register {
+         client_id: LanguageServerId,
+         client: Weak<Client>,
+@@ -54,6 +59,11 @@ impl Handler {
+     pub fn new() -> Self {
+         let (tx, rx) = mpsc::unbounded_channel();
+         tokio::spawn(Self::run(rx));
++        let tx_ = tx.clone();
++        register_hook!(move |event: &mut FileSystemDidChange| {
++            let _ = tx_.send(Event::FileWatcher(event.fs_events.clone()));
++            Ok(())
++        });
+         Self { tx }
+     }
+ 
+@@ -80,48 +90,72 @@ impl Handler {
+     }
+ 
+     pub fn file_changed(&self, path: PathBuf) {
+-        let _ = self.tx.send(Event::FileChanged { path });
++        let _ = self.tx.send(Event::FileWritten { path });
+     }
+ 
+     pub fn remove_client(&self, client_id: LanguageServerId) {
+         let _ = self.tx.send(Event::RemoveClient { client_id });
+     }
+ 
++    fn notify_files<'a>(
++        state: &mut HashMap<LanguageServerId, ClientState>,
++        changes: impl Iterator<Item = (&'a Path, lsp::FileChangeType)> + Clone,
++    ) {
++        state.retain(|id, client_state| {
++            let notifications: Vec<_> = changes
++                .clone()
++                .filter(|(path, _)| {
++                    client_state
++                        .registered
++                        .values()
++                        .any(|glob| glob.is_match(path))
++                })
++                .filter_map(|(path, typ)| {
++                    let uri = lsp::Url::from_file_path(path).ok()?;
++                    let event = lsp::FileEvent { uri, typ };
++                    Some(event)
++                })
++                .collect();
++            if notifications.is_empty() {
++                return false;
++            }
++            let Some(client) = client_state.client.upgrade() else {
++                log::warn!("LSP client was dropped: {id}");
++                return false;
++            };
++            log::debug!(
++                "Sending didChangeWatchedFiles notification to client '{}'",
++                client.name()
++            );
++            client.did_change_watched_files(notifications);
++            true
++        })
++    }
++
+     async fn run(mut rx: mpsc::UnboundedReceiver<Event>) {
+         let mut state: HashMap<LanguageServerId, ClientState> = HashMap::new();
+         while let Some(event) = rx.recv().await {
+             match event {
+-                Event::FileChanged { path } => {
++                Event::FileWatcher(events) => {
++                    Self::notify_files(
++                        &mut state,
++                        events.iter().filter_map(|event| {
++                            let ty = match event.ty {
++                                EventType::Create => lsp::FileChangeType::CREATED,
++                                EventType::Delete => lsp::FileChangeType::DELETED,
++                                EventType::Modified => lsp::FileChangeType::CHANGED,
++                                EventType::Tempfile => return None,
++                            };
++                            Some((event.path.as_std_path(), ty))
++                        }),
++                    );
++                }
++                Event::FileWritten { path } => {
+                     log::debug!("Received file event for {:?}", &path);
+-
+-                    state.retain(|id, client_state| {
+-                        if !client_state
+-                            .registered
+-                            .values()
+-                            .any(|glob| glob.is_match(&path))
+-                        {
+-                            return true;
+-                        }
+-                        let Some(client) = client_state.client.upgrade() else {
+-                            log::warn!("LSP client was dropped: {id}");
+-                            return false;
+-                        };
+-                        let Ok(uri) = lsp::Url::from_file_path(&path) else {
+-                            return true;
+-                        };
+-                        log::debug!(
+-                            "Sending didChangeWatchedFiles notification to client '{}'",
+-                            client.name()
+-                        );
+-                        client.did_change_watched_files(vec![lsp::FileEvent {
+-                            uri,
+-                            // We currently always send the CHANGED state
+-                            // since we don't actually have more context at
+-                            // the moment.
+-                            typ: lsp::FileChangeType::CHANGED,
+-                        }]);
+-                        true
+-                    });
++                    Self::notify_files(
++                        &mut state,
++                        [(&*path, lsp::FileChangeType::CHANGED)].iter().cloned(),
++                    );
+                 }
+                 Event::Register {
+                     client_id,
+diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
+index bf29fd456ad2..c6777830ea53 100644
+--- a/helix-term/src/commands/typed.rs
++++ b/helix-term/src/commands/typed.rs
+@@ -1438,11 +1438,13 @@ fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyh
+     doc.reload(view, &cx.editor.diff_providers).map(|_| {
+         view.ensure_cursor_in_view(doc, scrolloff);
+     })?;
+-    if let Some(path) = doc.path() {
+-        cx.editor
+-            .language_servers
+-            .file_event_handler
+-            .file_changed(path.clone());
++    if !cfg!(any(target_os = "linux", target_os = "android")) {
++        if let Some(path) = doc.path() {
++            cx.editor
++                .language_servers
++                .file_event_handler
++                .file_changed(path.clone());
++        }
+     }
+     Ok(())
+ }
+@@ -1484,11 +1486,13 @@ fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) ->
+             continue;
+         }
+ 
+-        if let Some(path) = doc.path() {
+-            cx.editor
+-                .language_servers
+-                .file_event_handler
+-                .file_changed(path.clone());
++        if !cfg!(any(target_os = "linux", target_os = "android")) {
++            if let Some(path) = doc.path() {
++                cx.editor
++                    .language_servers
++                    .file_event_handler
++                    .file_changed(path.clone());
++            }
+         }
+ 
+         for view_id in view_ids {
+diff --git a/helix-term/src/events.rs b/helix-term/src/events.rs
+index b0a42298914d..d25a271e06de 100644
+--- a/helix-term/src/events.rs
++++ b/helix-term/src/events.rs
+@@ -1,3 +1,4 @@
++use helix_core::file_watcher::FileSystemDidChange;
+ use helix_event::{events, register_event};
+ use helix_view::document::Mode;
+ use helix_view::events::{
+@@ -27,4 +28,5 @@ pub fn register() {
+     register_event::<LanguageServerInitialized>();
+     register_event::<LanguageServerExited>();
+     register_event::<ConfigDidChange>();
++    register_event::<FileSystemDidChange>();
+ }
+diff --git a/helix-term/src/handlers.rs b/helix-term/src/handlers.rs
+index 18297bfea104..3d72505b7540 100644
+--- a/helix-term/src/handlers.rs
++++ b/helix-term/src/handlers.rs
+@@ -14,6 +14,7 @@ pub use helix_view::handlers::{word_index, Handlers};
+ 
+ use self::document_colors::DocumentColorsHandler;
+ 
++mod auto_reload;
+ mod auto_save;
+ pub mod completion;
+ pub mod diagnostics;
+@@ -25,7 +26,7 @@ mod snippet;
+ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+     events::register();
+ 
+-    let event_tx = completion::CompletionHandler::new(config).spawn();
++    let event_tx = completion::CompletionHandler::new(config.clone()).spawn();
+     let signature_hints = SignatureHelpHandler::new().spawn();
+     let auto_save = AutoSaveHandler::new().spawn();
+     let document_colors = DocumentColorsHandler::default().spawn();
+@@ -51,5 +52,6 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+     snippet::register_hooks(&handlers);
+     document_colors::register_hooks(&handlers);
+     prompt::register_hooks(&handlers);
++    auto_reload::register_hooks(&config.load().editor);
+     handlers
+ }
+diff --git a/helix-term/src/handlers/auto_reload.rs b/helix-term/src/handlers/auto_reload.rs
+new file mode 100644
+index 000000000000..ab46050c2c29
+--- /dev/null
++++ b/helix-term/src/handlers/auto_reload.rs
+@@ -0,0 +1,106 @@
++use std::io;
++use std::sync::atomic::{self, AtomicBool};
++use std::sync::Arc;
++use std::time::SystemTime;
++
++use helix_core::file_watcher::{EventType, FileSystemDidChange};
++use helix_event::register_hook;
++use helix_view::editor::Config;
++use helix_view::events::ConfigDidChange;
++
++use crate::job;
++
++struct AutoReload {
++    enable: AtomicBool,
++    prompt_if_modified: AtomicBool,
++}
++
++impl AutoReload {
++    pub fn refresh_config(&self, config: &Config) {
++        self.enable
++            .store(config.auto_reload.enable, atomic::Ordering::Relaxed);
++        self.prompt_if_modified.store(
++            config.auto_reload.prompt_if_modified,
++            atomic::Ordering::Relaxed,
++        );
++    }
++
++    fn on_file_did_change(&self, event: &mut FileSystemDidChange) {
++        if !self.enable.load(atomic::Ordering::Relaxed) {
++            return;
++        }
++        let fs_events = event.fs_events.clone();
++        if !fs_events
++            .iter()
++            .any(|event| event.ty == EventType::Modified)
++        {
++            return;
++        }
++        job::dispatch_blocking(move |editor, _| {
++            let config = editor.config();
++            for fs_event in &*fs_events {
++                if fs_event.ty != EventType::Modified {
++                    continue;
++                }
++                let Some(doc_id) = editor.document_id_by_path(fs_event.path.as_std_path()) else {
++                    return;
++                };
++                let doc = doc_mut!(editor, &doc_id);
++                let mtime = match doc.path().unwrap().metadata() {
++                    Ok(meta) => meta.modified().unwrap_or(SystemTime::now()),
++                    Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
++                    Err(_) => SystemTime::now(),
++                };
++                if mtime == doc.last_saved_time {
++                    continue;
++                }
++                if doc.is_modified() {
++                    let msg = format!(
++                        "{} auto-reload failed due to unsaved changes, use :reload to refresh",
++                        doc.relative_path().unwrap().display()
++                    );
++                    editor.set_warning(msg);
++                } else {
++                    let scrolloff = config.scrolloff;
++                    let view = view_mut!(editor);
++                    match doc.reload(view, &editor.diff_providers) {
++                        Ok(_) => {
++                            view.ensure_cursor_in_view(doc, scrolloff);
++                            let msg = format!(
++                                "{} auto-reload external changes",
++                                doc.relative_path().unwrap().display()
++                            );
++                            editor.set_status(msg);
++                        }
++                        Err(err) => {
++                            let doc = doc!(editor, &doc_id);
++                            let msg = format!(
++                                "{} auto-reload failed: {err}",
++                                doc.relative_path().unwrap().display()
++                            );
++                            editor.set_error(msg);
++                        }
++                    }
++                }
++            }
++        });
++    }
++}
++
++pub(super) fn register_hooks(config: &Config) {
++    let handler = Arc::new(AutoReload {
++        enable: config.auto_reload.enable.into(),
++        prompt_if_modified: config.auto_reload.prompt_if_modified.into(),
++    });
++    let handler_ = handler.clone();
++    register_hook!(move |event: &mut ConfigDidChange<'_>| {
++        // when a document is initially opened, request colors for it
++        handler_.refresh_config(event.new);
++        Ok(())
++    });
++    register_hook!(move |event: &mut FileSystemDidChange| {
++        // when a document is initially opened, request colors for it
++        handler.on_file_did_change(event);
++        Ok(())
++    });
++}
+diff --git a/helix-term/src/ui/editor.rs b/helix-term/src/ui/editor.rs
+index b25af107d796..14c12aec1039 100644
+--- a/helix-term/src/ui/editor.rs
++++ b/helix-term/src/ui/editor.rs
+@@ -1569,6 +1569,8 @@ impl Component for EditorView {
+             use helix_view::editor::Severity;
+             let style = if *severity == Severity::Error {
+                 cx.editor.theme.get("error")
++            } else if *severity == Severity::Warning {
++                cx.editor.theme.get("warning")
+             } else {
+                 cx.editor.theme.get("ui.text")
+             };
+diff --git a/helix-view/src/document.rs b/helix-view/src/document.rs
+index 36fc3524917b..0bbd9dd489b1 100644
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -187,7 +187,7 @@ pub struct Document {
+ 
+     // Last time we wrote to the file. This will carry the time the file was last opened if there
+     // were no saves.
+-    last_saved_time: SystemTime,
++    pub last_saved_time: SystemTime,
+ 
+     last_saved_revision: usize,
+     version: i32, // should be usize?
+diff --git a/helix-view/src/editor.rs b/helix-view/src/editor.rs
+index f3f104076dee..32db6dda8653 100644
+--- a/helix-view/src/editor.rs
++++ b/helix-view/src/editor.rs
+@@ -45,6 +45,7 @@ pub use helix_core::diagnostic::Severity;
+ use helix_core::{
+     auto_pairs::AutoPairs,
+     diagnostic::DiagnosticProvider,
++    file_watcher::{self, Watcher},
+     syntax::{
+         self,
+         config::{AutoPairConfig, IndentationHeuristic, LanguageServerFeature, SoftWrap},
+@@ -428,6 +429,8 @@ pub struct Config {
+     /// Whether to enable Kitty Keyboard Protocol
+     pub kitty_keyboard_protocol: KittyKeyboardProtocolConfig,
+     pub buffer_picker: BufferPickerConfig,
++    pub auto_reload: AutoReloadConfig,
++    pub file_watcher: file_watcher::Config,
+ }
+ 
+ #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
+@@ -465,6 +468,22 @@ pub enum KittyKeyboardProtocolConfig {
+     Enabled,
+ }
+ 
++#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
++#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
++pub struct AutoReloadConfig {
++    pub enable: bool,
++    pub prompt_if_modified: bool,
++}
++
++impl Default for AutoReloadConfig {
++    fn default() -> Self {
++        AutoReloadConfig {
++            enable: true,
++            prompt_if_modified: false,
++        }
++    }
++}
++
+ #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
+ #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+ pub struct SmartTabConfig {
+@@ -1146,6 +1165,8 @@ impl Default for Config {
+             rainbow_brackets: false,
+             kitty_keyboard_protocol: Default::default(),
+             buffer_picker: BufferPickerConfig::default(),
++            file_watcher: file_watcher::Config::default(),
++            auto_reload: AutoReloadConfig::default(),
+         }
+     }
+ }
+@@ -1247,6 +1268,7 @@ pub struct Editor {
+ 
+     pub mouse_down_range: Option<Range>,
+     pub cursor_cache: CursorCache,
++    pub file_watcher: Watcher,
+ }
+ 
+ pub type Motion = Box<dyn Fn(&mut Editor)>;
+@@ -1368,6 +1390,7 @@ impl Editor {
+             handlers,
+             mouse_down_range: None,
+             cursor_cache: CursorCache::default(),
++            file_watcher: Watcher::new(&conf.file_watcher),
+         }
+     }
+ 
+@@ -1572,12 +1595,15 @@ impl Editor {
+             }
+             ls.did_rename(old_path, &new_path, is_dir);
+         }
+-        self.language_servers
+-            .file_event_handler
+-            .file_changed(old_path.to_owned());
+-        self.language_servers
+-            .file_event_handler
+-            .file_changed(new_path);
++
++        if !cfg!(any(target_os = "linux", target_os = "android")) {
++            self.language_servers
++                .file_event_handler
++                .file_changed(old_path.to_owned());
++            self.language_servers
++                .file_event_handler
++                .file_changed(new_path);
++        }
+         Ok(())
+     }
+ 
+@@ -2046,8 +2072,10 @@ impl Editor {
+         let handler = self.language_servers.file_event_handler.clone();
+         let future = async move {
+             let res = doc_save_future.await;
+-            if let Ok(event) = &res {
+-                handler.file_changed(event.path.clone());
++            if !cfg!(any(target_os = "linux", target_os = "android")) {
++                if let Ok(event) = &res {
++                    handler.file_changed(event.path.clone());
++                }
+             }
+             res
+         };
+diff --git a/helix-view/src/handlers.rs b/helix-view/src/handlers.rs
+index 6f3ad1ed2015..e2fed147b5c6 100644
+--- a/helix-view/src/handlers.rs
++++ b/helix-view/src/handlers.rs
+@@ -1,7 +1,8 @@
+ use completion::{CompletionEvent, CompletionHandler};
+-use helix_event::send_blocking;
++use helix_event::{register_hook, send_blocking};
+ use tokio::sync::mpsc::Sender;
+ 
++use crate::events::ConfigDidChange;
+ use crate::handlers::lsp::SignatureHelpInvoked;
+ use crate::{DocumentId, Editor, ViewId};
+ 
+@@ -59,4 +60,9 @@ impl Handlers {
+ pub fn register_hooks(handlers: &Handlers) {
+     lsp::register_hooks(handlers);
+     word_index::register_hooks(handlers);
++    // must be done here because the file watcher is in helix-core
++    register_hook!(move |event: &mut ConfigDidChange<'_>| {
++        event.editor.file_watcher.reload(&event.new.file_watcher);
++        Ok(())
++    });
+ }
+diff --git a/helix-view/src/handlers/lsp.rs b/helix-view/src/handlers/lsp.rs
+index 96ab462632ce..771d4b3b08ef 100644
+--- a/helix-view/src/handlers/lsp.rs
++++ b/helix-view/src/handlers/lsp.rs
+@@ -248,9 +248,11 @@ impl Editor {
+                     }
+ 
+                     fs::write(path, [])?;
+-                    self.language_servers
+-                        .file_event_handler
+-                        .file_changed(path.to_path_buf());
++                    if !cfg!(any(target_os = "linux", target_os = "android")) {
++                        self.language_servers
++                            .file_event_handler
++                            .file_changed(path.to_path_buf());
++                    }
+                 }
+             }
+             ResourceOp::Delete(op) => {
+@@ -268,11 +270,13 @@ impl Editor {
+                     } else {
+                         fs::remove_dir(path)?
+                     }
+-                    self.language_servers
+-                        .file_event_handler
+-                        .file_changed(path.to_path_buf());
+                 } else if path.is_file() {
+                     fs::remove_file(path)?;
++                    if !cfg!(any(target_os = "linux", target_os = "android")) {
++                        self.language_servers
++                            .file_event_handler
++                            .file_changed(path.to_path_buf());
++                    }
+                 }
+             }
+             ResourceOp::Rename(op) => {
+
+From de31055830e6f7626e8606e9a5b83d77d6065323 Mon Sep 17 00:00:00 2001
+From: Pascal Kuthe <pascalkuthe@pm.me>
+Date: Mon, 6 Oct 2025 00:57:04 +0200
+Subject: [PATCH 2/4] automatically reload git repo when commit changes
+
+---
+ helix-term/src/handlers/auto_reload.rs | 13 +++++++++++++
+ helix-vcs/Cargo.toml                   |  1 +
+ helix-vcs/src/lib.rs                   | 14 ++++++++++++++
+ helix-view/src/document.rs             |  2 +-
+ 4 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/helix-term/src/handlers/auto_reload.rs b/helix-term/src/handlers/auto_reload.rs
+index ab46050c2c29..ac69ec2091ef 100644
+--- a/helix-term/src/handlers/auto_reload.rs
++++ b/helix-term/src/handlers/auto_reload.rs
+@@ -38,10 +38,12 @@ impl AutoReload {
+         }
+         job::dispatch_blocking(move |editor, _| {
+             let config = editor.config();
++            let mut vcs_reload = false;
+             for fs_event in &*fs_events {
+                 if fs_event.ty != EventType::Modified {
+                     continue;
+                 }
++                vcs_reload |= editor.diff_providers.needs_reload(fs_event);
+                 let Some(doc_id) = editor.document_id_by_path(fs_event.path.as_std_path()) else {
+                     return;
+                 };
+@@ -83,6 +85,17 @@ impl AutoReload {
+                     }
+                 }
+             }
++            if vcs_reload {
++                for doc in editor.documents.values_mut() {
++                    let Some(path) = doc.path() else {
++                        continue;
++                    };
++                    match editor.diff_providers.get_diff_base(path) {
++                        Some(diff_base) => doc.set_diff_base(diff_base),
++                        None => doc.diff_handle = None,
++                    }
++                }
++            }
+         });
+     }
+ }
+diff --git a/helix-vcs/Cargo.toml b/helix-vcs/Cargo.toml
+index 7967663f7dd7..f8d4021ee2a6 100644
+--- a/helix-vcs/Cargo.toml
++++ b/helix-vcs/Cargo.toml
+@@ -12,6 +12,7 @@ homepage.workspace = true
+ [dependencies]
+ helix-core = { path = "../helix-core" }
+ helix-event = { path = "../helix-event" }
++helix-stdx = { path = "../helix-stdx" }
+ 
+ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "sync", "parking_lot", "macros"] }
+ parking_lot.workspace = true
+diff --git a/helix-vcs/src/lib.rs b/helix-vcs/src/lib.rs
+index 4c5f2036aa49..e38cba6f832e 100644
+--- a/helix-vcs/src/lib.rs
++++ b/helix-vcs/src/lib.rs
+@@ -57,6 +57,12 @@ impl DiffProviderRegistry {
+             })
+     }
+ 
++    pub fn needs_reload(&self, fs_event: &helix_core::file_watcher::Event) -> bool {
++        self.providers
++            .iter()
++            .any(|provider| provider.needs_reload(fs_event))
++    }
++
+     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
+     /// iteration until `on_change` returns `false`.
+     pub fn for_each_changed_file(
+@@ -102,6 +108,14 @@ enum DiffProvider {
+ }
+ 
+ impl DiffProvider {
++    pub fn needs_reload(&self, fs_event: &helix_core::file_watcher::Event) -> bool {
++        match self {
++            #[cfg(feature = "git")]
++            DiffProvider::Git => fs_event.path.as_std_path().ends_with(".git/HEAD"),
++            DiffProvider::None => false,
++        }
++    }
++
+     fn get_diff_base(&self, file: &Path) -> Result<Vec<u8>> {
+         match self {
+             #[cfg(feature = "git")]
+diff --git a/helix-view/src/document.rs b/helix-view/src/document.rs
+index 0bbd9dd489b1..a25c62a42c70 100644
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -196,7 +196,7 @@ pub struct Document {
+     pub(crate) diagnostics: Vec<Diagnostic>,
+     pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
+ 
+-    diff_handle: Option<DiffHandle>,
++    pub diff_handle: Option<DiffHandle>,
+     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
+ 
+     // when document was used for most-recent-used buffer picker
+
+From 47aba316fb257fbc7e41869f78fe83df15b18c7e Mon Sep 17 00:00:00 2001
+From: Pascal Kuthe <pascalkuthe@pm.me>
+Date: Mon, 6 Oct 2025 00:57:48 +0200
+Subject: [PATCH 3/4] support for relative lsp file watcher patterns
+
+---
+ Cargo.lock                     | 205 ++++++++++------------
+ helix-core/Cargo.toml          |   3 +
+ helix-core/src/file_watcher.rs |   7 +-
+ helix-lsp/src/client.rs        |   2 +-
+ helix-lsp/src/file_event.rs    | 306 +++++++++++++++++++++++----------
+ helix-term/src/application.rs  |  15 +-
+ 6 files changed, 330 insertions(+), 208 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 5b8abc0025af..5fc24ebfb2f5 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -85,9 +85,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "bumpalo"
+-version = "3.19.0"
++version = "3.19.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
++checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
+ 
+ [[package]]
+ name = "byteorder"
+@@ -97,9 +97,9 @@ checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+ 
+ [[package]]
+ name = "bytes"
+-version = "1.10.1"
++version = "1.11.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
++checksum = "b35204fbdc0b3f4446b89fc1ac2cf84a8a68971995d0bf2e925ec7cd960f9cb3"
+ 
+ [[package]]
+ name = "cassowary"
+@@ -109,9 +109,9 @@ checksum = "df8670b8c7b9dae1793364eafadf7239c40d669904660c5960d74cfd80b46a53"
+ 
+ [[package]]
+ name = "cc"
+-version = "1.2.49"
++version = "1.2.39"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
++checksum = "e1354349954c6fc9cb0deab020f27f783cf0b604e8bb754dc4658ecf0d29c35f"
+ dependencies = [
+  "find-msvc-tools",
+  "shlex",
+@@ -433,9 +433,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "find-msvc-tools"
+-version = "0.1.5"
++version = "0.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
++checksum = "1ced73b1dacfc750a6db6c0a0c3a3853c8b41997e2e2c563dc90804ae6867959"
+ 
+ [[package]]
+ name = "fnv"
+@@ -847,7 +847,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "a27d4a3ea9640da504a2657fef3419c517fd71f1767ad8935298bcc805edd195"
+ dependencies = [
+  "gix-hash",
+- "hashbrown 0.16.1",
++ "hashbrown 0.16.0",
+  "parking_lot",
+ ]
+ 
+@@ -883,7 +883,7 @@ dependencies = [
+  "gix-traverse",
+  "gix-utils",
+  "gix-validate",
+- "hashbrown 0.16.1",
++ "hashbrown 0.16.0",
+  "itoa",
+  "libc",
+  "memmap2",
+@@ -1107,7 +1107,7 @@ dependencies = [
+  "bitflags",
+  "gix-path",
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -1343,9 +1343,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "hashbrown"
+-version = "0.16.1"
++version = "0.16.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
++checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
+ dependencies = [
+  "allocator-api2",
+  "equivalent",
+@@ -1439,7 +1439,7 @@ dependencies = [
+  "anyhow",
+  "foldhash 0.2.0",
+  "futures-executor",
+- "hashbrown 0.16.1",
++ "hashbrown 0.16.0",
+  "log",
+  "once_cell",
+  "parking_lot",
+@@ -1517,7 +1517,7 @@ dependencies = [
+  "tempfile",
+  "unicode-segmentation",
+  "which",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -1594,6 +1594,7 @@ dependencies = [
+  "gix",
+  "helix-core",
+  "helix-event",
++ "helix-stdx",
+  "imara-diff 0.2.0",
+  "log",
+  "parking_lot",
+@@ -1852,22 +1853,19 @@ dependencies = [
+ 
+ [[package]]
+ name = "indexmap"
+-version = "2.12.1"
++version = "2.12.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
++checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
+ dependencies = [
+  "equivalent",
+- "hashbrown 0.16.1",
++ "hashbrown 0.16.0",
+ ]
+ 
+ [[package]]
+ name = "indoc"
+-version = "2.0.7"
++version = "2.0.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
+-dependencies = [
+- "rustversion",
+-]
++checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
+ 
+ [[package]]
+ name = "is-docker"
+@@ -1937,9 +1935,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "js-sys"
+-version = "0.3.80"
++version = "0.3.83"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "852f13bec5eba4ba9afbeb93fd7c13fe56147f055939ae21c43a29a0ecb2702e"
++checksum = "464a3709c7f55f1f721e5389aa6ea4e3bc6aba669353300af094b29ffbdde1d8"
+ dependencies = [
+  "once_cell",
+  "wasm-bindgen",
+@@ -1983,9 +1981,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "libz-rs-sys"
+-version = "0.5.2"
++version = "0.5.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "840db8cf39d9ec4dd794376f38acc40d0fc65eec2a8f484f7fd375b84602becd"
++checksum = "15413ef615ad868d4d65dce091cb233b229419c7c0c4bcaa746c0901c49ff39c"
+ dependencies = [
+  "zlib-rs",
+ ]
+@@ -2010,18 +2008,19 @@ checksum = "643cb0b8d4fcc284004d5fd0d67ccf61dfffadb7f75e1e71bc420f4688a3a704"
+ 
+ [[package]]
+ name = "lock_api"
+-version = "0.4.14"
++version = "0.4.13"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
++checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
+ dependencies = [
++ "autocfg",
+  "scopeguard",
+ ]
+ 
+ [[package]]
+ name = "log"
+-version = "0.4.29"
++version = "0.4.28"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
++checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+ 
+ [[package]]
+ name = "maybe-async"
+@@ -2063,18 +2062,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "munge"
+-version = "0.4.6"
++version = "0.4.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "d7feb0b48aa0a25f9fe0899482c6e1379ee7a11b24a53073eacdecb9adb6dc60"
++checksum = "5e17401f259eba956ca16491461b6e8f72913a0a114e39736ce404410f915a0c"
+ dependencies = [
+  "munge_macro",
+ ]
+ 
+ [[package]]
+ name = "munge_macro"
+-version = "0.4.6"
++version = "0.4.7"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f2e3795a5d2da581a8b252fec6022eee01aea10161a4d1bf237d4cbe47f7e988"
++checksum = "4568f25ccbd45ab5d5603dc34318c1ec56b117531781260002151b8530a9f931"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -2150,9 +2149,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "parking_lot"
+-version = "0.12.5"
++version = "0.12.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
++checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
+ dependencies = [
+  "lock_api",
+  "parking_lot_core",
+@@ -2160,15 +2159,15 @@ dependencies = [
+ 
+ [[package]]
+ name = "parking_lot_core"
+-version = "0.9.12"
++version = "0.9.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
++checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
+ dependencies = [
+  "cfg-if",
+  "libc",
+  "redox_syscall",
+  "smallvec",
+- "windows-link",
++ "windows-targets 0.52.6",
+ ]
+ 
+ [[package]]
+@@ -2230,18 +2229,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "ptr_meta"
+-version = "0.3.0"
++version = "0.3.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fe9e76f66d3f9606f44e45598d155cb13ecf09f4a28199e48daf8c8fc937ea90"
++checksum = "0b9a0cf95a1196af61d4f1cbdab967179516d9a4a4312af1f31948f8f6224a79"
+ dependencies = [
+  "ptr_meta_derive",
+ ]
+ 
+ [[package]]
+ name = "ptr_meta_derive"
+-version = "0.3.0"
++version = "0.3.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ca414edb151b4c8d125c12566ab0d74dc9cdba36fb80eb7b848c15f495fd32d1"
++checksum = "7347867d0a7e1208d93b46767be83e2b8f978c3dad35f775ac8d8847551d6fe1"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -2279,9 +2278,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "rancor"
+-version = "0.1.0"
++version = "0.1.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "caf5f7161924b9d1cea0e4cabc97c372cea92b5f927fc13c6bca67157a0ad947"
++checksum = "a063ea72381527c2a0561da9c80000ef822bdd7c3241b1cc1b12100e3df081ee"
+ dependencies = [
+  "ptr_meta",
+ ]
+@@ -2335,18 +2334,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "ref-cast"
+-version = "1.0.24"
++version = "1.0.25"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
++checksum = "f354300ae66f76f1c85c5f84693f0ce81d747e2c3f21a45fef496d89c960bf7d"
+ dependencies = [
+  "ref-cast-impl",
+ ]
+ 
+ [[package]]
+ name = "ref-cast-impl"
+-version = "1.0.24"
++version = "1.0.25"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
++checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -2355,9 +2354,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "regex"
+-version = "1.12.2"
++version = "1.11.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
++checksum = "8b5288124840bee7b386bc413c487869b360b2b4ec421ea56425128692f2a82c"
+ dependencies = [
+  "aho-corasick",
+  "memchr",
+@@ -2367,9 +2366,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "regex-automata"
+-version = "0.4.13"
++version = "0.4.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
++checksum = "833eb9ce86d40ef33cb1306d8accf7bc8ec2bfea4355cbdebb3df68b40925cad"
+ dependencies = [
+  "aho-corasick",
+  "memchr",
+@@ -2397,15 +2396,15 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
+ 
+ [[package]]
+ name = "rend"
+-version = "0.5.2"
++version = "0.5.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a35e8a6bf28cd121053a66aa2e6a2e3eaffad4a60012179f0e864aa5ffeff215"
++checksum = "cadadef317c2f20755a64d7fdc48f9e7178ee6b0e1f7fce33fa60f1d68a276e6"
+ 
+ [[package]]
+ name = "rkyv"
+-version = "0.8.11"
++version = "0.8.12"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "19f5c3e5da784cd8c69d32cdc84673f3204536ca56e1fa01be31a74b92c932ac"
++checksum = "35a640b26f007713818e9a9b65d34da1cf58538207b052916a83d80e43f3ffa4"
+ dependencies = [
+  "bytes",
+  "hashbrown 0.15.5",
+@@ -2421,9 +2420,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "rkyv_derive"
+-version = "0.8.11"
++version = "0.8.12"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "4270433626cffc9c4c1d3707dd681f2a2718d3d7b09ad754bec137acecda8d22"
++checksum = "bd83f5f173ff41e00337d97f6572e416d022ef8a19f371817259ae960324c482"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -2548,9 +2547,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "serde_spanned"
+-version = "1.0.3"
++version = "1.0.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "e24345aa0fe688594e73770a5f6d1b216508b4f93484c0026d521acd30134392"
++checksum = "2789234a13a53fc4be1b51ea1bab45a3c338bdb884862a257d10e5a74ae009e6"
+ dependencies = [
+  "serde_core",
+ ]
+@@ -2719,9 +2718,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "sonic-simd"
+-version = "0.1.1"
++version = "0.1.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "b421f7b6aa4a5de8f685aaf398dfaa828346ee639d2b1c1061ab43d40baa6223"
++checksum = "5707edbfb34a40c9f2a55fa09a49101d9fec4e0cc171ce386086bd9616f34257"
+ dependencies = [
+  "cfg-if",
+ ]
+@@ -2881,7 +2880,7 @@ dependencies = [
+  "signal-hook-registry",
+  "socket2",
+  "tokio-macros",
+- "windows-sys 0.61.2",
++ "windows-sys 0.61.1",
+ ]
+ 
+ [[package]]
+@@ -2908,9 +2907,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "toml"
+-version = "0.9.8"
++version = "0.9.6"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f0dc8b1fb61449e27716ec0e1bdf0f6b8f3e8f6b05391e8497b8b6d7804ea6d8"
++checksum = "ae2a4cf385da23d1d53bc15cdfa5c2109e93d8d362393c801e87da2f72f0e201"
+ dependencies = [
+  "indexmap",
+  "serde_core",
+@@ -2923,27 +2922,27 @@ dependencies = [
+ 
+ [[package]]
+ name = "toml_datetime"
+-version = "0.7.3"
++version = "0.7.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f2cdb639ebbc97961c51720f858597f7f24c4fc295327923af55b74c3c724533"
++checksum = "a197c0ec7d131bfc6f7e82c8442ba1595aeab35da7adbf05b6b73cd06a16b6be"
+ dependencies = [
+  "serde_core",
+ ]
+ 
+ [[package]]
+ name = "toml_parser"
+-version = "1.0.4"
++version = "1.0.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "c0cbe268d35bdb4bb5a56a2de88d0ad0eb70af5384a99d648cd4b3d04039800e"
++checksum = "b551886f449aa90d4fe2bdaa9f4a2577ad2dde302c61ecf262d80b116db95c10"
+ dependencies = [
+  "winnow",
+ ]
+ 
+ [[package]]
+ name = "toml_writer"
+-version = "1.0.4"
++version = "1.0.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "df8b2b54733674ad286d16267dcfc7a71ed5c776e4ac7aa3c3e2561f7c637bf2"
++checksum = "fcc842091f2def52017664b53082ecbbeb5c7731092bad69d2c63050401dfd64"
+ 
+ [[package]]
+ name = "tree-house"
+@@ -3067,9 +3066,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+ 
+ [[package]]
+ name = "uuid"
+-version = "1.18.1"
++version = "1.19.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
++checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
+ dependencies = [
+  "js-sys",
+  "wasm-bindgen",
+@@ -3108,9 +3107,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "wasm-bindgen"
+-version = "0.2.103"
++version = "0.2.106"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ab10a69fbd0a177f5f649ad4d8d3305499c42bab9aef2f7ff592d0ec8f833819"
++checksum = "0d759f433fa64a2d763d1340820e46e111a7a5ab75f993d1852d70b03dbb80fd"
+ dependencies = [
+  "cfg-if",
+  "once_cell",
+@@ -3119,25 +3118,11 @@ dependencies = [
+  "wasm-bindgen-shared",
+ ]
+ 
+-[[package]]
+-name = "wasm-bindgen-backend"
+-version = "0.2.103"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0bb702423545a6007bbc368fde243ba47ca275e549c8a28617f56f6ba53b1d1c"
+-dependencies = [
+- "bumpalo",
+- "log",
+- "proc-macro2",
+- "quote",
+- "syn",
+- "wasm-bindgen-shared",
+-]
+-
+ [[package]]
+ name = "wasm-bindgen-macro"
+-version = "0.2.103"
++version = "0.2.106"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "fc65f4f411d91494355917b605e1480033152658d71f722a90647f56a70c88a0"
++checksum = "48cb0d2638f8baedbc542ed444afc0644a29166f1595371af4fecf8ce1e7eeb3"
+ dependencies = [
+  "quote",
+  "wasm-bindgen-macro-support",
+@@ -3145,22 +3130,22 @@ dependencies = [
+ 
+ [[package]]
+ name = "wasm-bindgen-macro-support"
+-version = "0.2.103"
++version = "0.2.106"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ffc003a991398a8ee604a401e194b6b3a39677b3173d6e74495eb51b82e99a32"
++checksum = "cefb59d5cd5f92d9dcf80e4683949f15ca4b511f4ac0a6e14d4e1ac60c6ecd40"
+ dependencies = [
++ "bumpalo",
+  "proc-macro2",
+  "quote",
+  "syn",
+- "wasm-bindgen-backend",
+  "wasm-bindgen-shared",
+ ]
+ 
+ [[package]]
+ name = "wasm-bindgen-shared"
+-version = "0.2.103"
++version = "0.2.106"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "293c37f4efa430ca14db3721dfbe48d8c33308096bd44d80ebaa775ab71ba1cf"
++checksum = "cbc538057e648b67f72a982e708d485b2efa771e1ac05fec311f9f63e5800db4"
+ dependencies = [
+  "unicode-ident",
+ ]
+@@ -3218,9 +3203,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "windows-link"
+-version = "0.2.1"
++version = "0.2.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
++checksum = "45e46c0661abb7180e7b9c281db115305d49ca1709ab8242adf09666d2173c65"
+ 
+ [[package]]
+ name = "windows-sys"
+@@ -3242,9 +3227,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "windows-sys"
+-version = "0.61.2"
++version = "0.61.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
++checksum = "6f109e41dd4a3c848907eb83d5a42ea98b3769495597450cf6d153507b166f0f"
+ dependencies = [
+  "windows-link",
+ ]
+@@ -3379,9 +3364,9 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
+ 
+ [[package]]
+ name = "winnow"
+-version = "0.7.13"
++version = "0.7.14"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
++checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
+ dependencies = [
+  "memchr",
+ ]
+@@ -3450,18 +3435,18 @@ dependencies = [
+ 
+ [[package]]
+ name = "zerocopy"
+-version = "0.8.27"
++version = "0.8.31"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "0894878a5fa3edfd6da3f88c4805f4c8558e2b996227a3d864f47fe11e38282c"
++checksum = "fd74ec98b9250adb3ca554bdde269adf631549f51d8a8f8f0a10b50f1cb298c3"
+ dependencies = [
+  "zerocopy-derive",
+ ]
+ 
+ [[package]]
+ name = "zerocopy-derive"
+-version = "0.8.27"
++version = "0.8.31"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "88d2b8d9c68ad2b9e4340d7832716a4d21a22a1154777ad56ea55c51a9cf3831"
++checksum = "d8a8d209fdf45cf5138cbb5a506f6b52522a25afccc534d1475dad8e31105c6a"
+ dependencies = [
+  "proc-macro2",
+  "quote",
+@@ -3513,6 +3498,6 @@ dependencies = [
+ 
+ [[package]]
+ name = "zlib-rs"
+-version = "0.5.2"
++version = "0.5.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "2f06ae92f42f5e5c42443fd094f245eb656abf56dd7cce9b8b263236565e00f2"
++checksum = "51f936044d677be1a1168fae1d03b583a285a5dd9d8cbf7b24c23aa1fc775235"
+diff --git a/helix-core/Cargo.toml b/helix-core/Cargo.toml
+index c07cd4a98cd6..c7602d2996fb 100644
+--- a/helix-core/Cargo.toml
++++ b/helix-core/Cargo.toml
+@@ -60,6 +60,9 @@ parking_lot.workspace = true
+ globset.workspace = true
+ regex-cursor = "0.1.5"
+ 
++[target.'cfg(target_os = "linux")'.dependencies]
++filesentry = "0.2.1"
++
+ [dev-dependencies]
+ quickcheck = { version = "1", default-features = false }
+ indoc = "2.0.6"
+diff --git a/helix-core/src/file_watcher.rs b/helix-core/src/file_watcher.rs
+index d3d9a678d8a3..cd0f32daaad4 100644
+--- a/helix-core/src/file_watcher.rs
++++ b/helix-core/src/file_watcher.rs
+@@ -82,7 +82,7 @@ impl Default for Config {
+     fn default() -> Self {
+         Config {
+             enable: true,
+-            watch_vcs: false,
++            watch_vcs: true,
+             require_workspace: true,
+             hidden: true,
+             ignore: true,
+@@ -202,7 +202,10 @@ impl Watcher {
+             return;
+         }
+         let (workspace, _) = helix_loader::find_workspace();
+-        self.roots.push((root.clone(), 1));
++        if root.starts_with(&workspace) {
++            return;
++        }
++        self.roots.insert(i, (root.clone(), 1));
+         self.filter = Arc::new(WatchFilter::new(
+             &self.config,
+             &workspace,
+diff --git a/helix-lsp/src/client.rs b/helix-lsp/src/client.rs
+index ecac98ff60c7..7496f7439d19 100644
+--- a/helix-lsp/src/client.rs
++++ b/helix-lsp/src/client.rs
+@@ -596,7 +596,7 @@ impl Client {
+                     }),
+                     did_change_watched_files: Some(lsp::DidChangeWatchedFilesClientCapabilities {
+                         dynamic_registration: Some(true),
+-                        relative_pattern_support: Some(false),
++                        relative_pattern_support: Some(true),
+                     }),
+                     file_operations: Some(lsp::WorkspaceFileOperationsClientCapabilities {
+                         will_rename: Some(true),
+diff --git a/helix-lsp/src/file_event.rs b/helix-lsp/src/file_event.rs
+index ccfe45583d56..00acb8e276e0 100644
+--- a/helix-lsp/src/file_event.rs
++++ b/helix-lsp/src/file_event.rs
+@@ -1,9 +1,12 @@
+-use std::path::Path;
++use std::collections::hash_map;
++use std::mem::take;
++use std::path::{is_separator, Path};
+ use std::{collections::HashMap, path::PathBuf, sync::Weak};
+ 
+-use globset::{GlobBuilder, GlobSetBuilder};
++use globset::{Glob, GlobSet};
+ use helix_core::file_watcher::{EventType, Events, FileSystemDidChange};
+ use helix_event::register_hook;
++use helix_lsp_types::WatchKind;
+ use tokio::sync::mpsc;
+ 
+ use crate::{lsp, Client, LanguageServerId};
+@@ -15,7 +18,6 @@ enum Event {
+     },
+     FileWatcher(Events),
+     Register {
+-        client_id: LanguageServerId,
+         client: Weak<Client>,
+         registration_id: String,
+         options: lsp::DidChangeWatchedFilesRegistrationOptions,
+@@ -29,10 +31,108 @@ enum Event {
+     },
+ }
+ 
+-#[derive(Default)]
+ struct ClientState {
+     client: Weak<Client>,
+-    registered: HashMap<String, globset::GlobSet>,
++    registerations: HashMap<String, u32>,
++    pending: Vec<lsp::FileEvent>,
++}
++
++#[derive(Debug, Clone)]
++struct Interest {
++    glob: Glob,
++    server: LanguageServerId,
++    id: u32,
++    flags: WatchKind,
++}
++
++struct State {
++    clients: HashMap<LanguageServerId, ClientState>,
++    glob_matcher: GlobSet,
++    interest: Vec<Interest>,
++    // used for matching to avoid reallocation
++    candidates: Vec<usize>,
++}
++impl State {
++    fn notify<'a>(&mut self, events: impl Iterator<Item = (&'a Path, EventType)> + Clone) {
++        for (path, ty) in events {
++            let (interest_kind, notification_type) = match ty {
++                EventType::Create => (WatchKind::Create, lsp::FileChangeType::CREATED),
++                EventType::Delete => (WatchKind::Delete, lsp::FileChangeType::DELETED),
++                EventType::Modified => (WatchKind::Change, lsp::FileChangeType::CHANGED),
++                EventType::Tempfile => continue,
++            };
++            self.glob_matcher.matches_into(path, &mut self.candidates);
++            for interest in self.candidates.drain(..) {
++                let interest = &self.interest[interest];
++                if !interest.flags.contains(interest_kind) {
++                    continue;
++                }
++                let Ok(uri) = lsp::Url::from_file_path(path) else {
++                    continue;
++                };
++                let event = lsp::FileEvent {
++                    uri,
++                    typ: notification_type,
++                };
++                self.clients
++                    .get_mut(&interest.server)
++                    .unwrap()
++                    .pending
++                    .push(event);
++            }
++        }
++        for client_state in self.clients.values_mut() {
++            if client_state.pending.is_empty() {
++                continue;
++            }
++            let Some(client) = client_state.client.upgrade() else {
++                continue;
++            };
++            log::debug!(
++                "Sending didChangeWatchedFiles notification to client '{}'",
++                client.name()
++            );
++            client.did_change_watched_files(take(&mut client_state.pending));
++        }
++    }
++
++    fn purge_client(&mut self, id: LanguageServerId) {
++        self.clients.remove(&id);
++        let interest = self
++            .interest
++            .iter()
++            .filter(|it| it.server != id)
++            .cloned()
++            .collect();
++        self.rebuild_globmatcher(interest);
++    }
++
++    fn rebuild_globmatcher(&mut self, interest: Vec<Interest>) {
++        let mut builder = GlobSet::builder();
++        for interest in &interest {
++            builder.add(interest.glob.clone());
++        }
++        match builder.build() {
++            Ok(glob_matcher) => {
++                self.glob_matcher = glob_matcher;
++                self.interest = interest;
++            }
++            Err(err) => {
++                log::error!("failed to build glob matcher for file watching: ({err})",);
++            }
++        }
++    }
++}
++
++impl Default for State {
++    fn default() -> State {
++        State {
++            clients: Default::default(),
++            glob_matcher: Default::default(),
++            interest: Default::default(),
++            candidates: Vec::with_capacity(32),
++        }
++    }
+ }
+ 
+ /// The Handler uses a dedicated tokio task to respond to file change events by
+@@ -69,13 +169,11 @@ impl Handler {
+ 
+     pub fn register(
+         &self,
+-        client_id: LanguageServerId,
+         client: Weak<Client>,
+         registration_id: String,
+         options: lsp::DidChangeWatchedFilesRegistrationOptions,
+     ) {
+         let _ = self.tx.send(Event::Register {
+-            client_id,
+             client,
+             registration_id,
+             options,
+@@ -97,125 +195,145 @@ impl Handler {
+         let _ = self.tx.send(Event::RemoveClient { client_id });
+     }
+ 
+-    fn notify_files<'a>(
+-        state: &mut HashMap<LanguageServerId, ClientState>,
+-        changes: impl Iterator<Item = (&'a Path, lsp::FileChangeType)> + Clone,
+-    ) {
+-        state.retain(|id, client_state| {
+-            let notifications: Vec<_> = changes
+-                .clone()
+-                .filter(|(path, _)| {
+-                    client_state
+-                        .registered
+-                        .values()
+-                        .any(|glob| glob.is_match(path))
+-                })
+-                .filter_map(|(path, typ)| {
+-                    let uri = lsp::Url::from_file_path(path).ok()?;
+-                    let event = lsp::FileEvent { uri, typ };
+-                    Some(event)
+-                })
+-                .collect();
+-            if notifications.is_empty() {
+-                return false;
+-            }
+-            let Some(client) = client_state.client.upgrade() else {
+-                log::warn!("LSP client was dropped: {id}");
+-                return false;
+-            };
+-            log::debug!(
+-                "Sending didChangeWatchedFiles notification to client '{}'",
+-                client.name()
+-            );
+-            client.did_change_watched_files(notifications);
+-            true
+-        })
+-    }
+-
+     async fn run(mut rx: mpsc::UnboundedReceiver<Event>) {
+-        let mut state: HashMap<LanguageServerId, ClientState> = HashMap::new();
++        let mut state = State::default();
+         while let Some(event) = rx.recv().await {
+             match event {
+                 Event::FileWatcher(events) => {
+-                    Self::notify_files(
+-                        &mut state,
+-                        events.iter().filter_map(|event| {
+-                            let ty = match event.ty {
+-                                EventType::Create => lsp::FileChangeType::CREATED,
+-                                EventType::Delete => lsp::FileChangeType::DELETED,
+-                                EventType::Modified => lsp::FileChangeType::CHANGED,
+-                                EventType::Tempfile => return None,
+-                            };
+-                            Some((event.path.as_std_path(), ty))
+-                        }),
+-                    );
++                    let events = events
++                        .iter()
++                        .map(|event| (event.path.as_std_path(), event.ty));
++                    state.notify(events);
+                 }
+                 Event::FileWritten { path } => {
+                     log::debug!("Received file event for {:?}", &path);
+-                    Self::notify_files(
+-                        &mut state,
+-                        [(&*path, lsp::FileChangeType::CHANGED)].iter().cloned(),
+-                    );
++                    state.notify([(&*path, EventType::Modified)].iter().cloned());
+                 }
+                 Event::Register {
+-                    client_id,
+                     client,
+                     registration_id,
+                     options: ops,
+                 } => {
++                    let Some(client_) = client.upgrade() else {
++                        continue;
++                    };
+                     log::debug!(
+                         "Registering didChangeWatchedFiles for client '{}' with id '{}'",
+-                        client_id,
++                        client_.name(),
+                         registration_id
+                     );
+ 
+-                    let entry = state.entry(client_id).or_default();
++                    if !state
++                        .clients
++                        .get(&client_.id())
++                        .is_some_and(|state| !state.client.ptr_eq(&client))
++                    {
++                        state.purge_client(client_.id());
++                    }
++                    let entry = state
++                        .clients
++                        .entry(client_.id())
++                        .or_insert_with(|| ClientState {
++                            client: client.clone(),
++                            registerations: HashMap::with_capacity(8),
++                            pending: Vec::with_capacity(32),
++                        });
+                     entry.client = client;
+-
+-                    let mut builder = GlobSetBuilder::new();
+-                    for watcher in ops.watchers {
+-                        if let lsp::GlobPattern::String(pattern) = watcher.glob_pattern {
+-                            if let Ok(glob) = GlobBuilder::new(&pattern).build() {
+-                                builder.add(glob);
+-                            }
++                    let next_id = u32::try_from(entry.registerations.len()).unwrap();
++                    let (mut interest, id) = match entry.registerations.entry(registration_id) {
++                        hash_map::Entry::Occupied(entry) => {
++                            let id = *entry.get();
++                            let mut interest = Vec::with_capacity(state.interest.len());
++                            interest.extend(
++                                state
++                                    .interest
++                                    .iter()
++                                    .filter(|it| it.server != client_.id() || it.id != id)
++                                    .cloned(),
++                            );
++                            (interest, id)
+                         }
+-                    }
+-                    match builder.build() {
+-                        Ok(globset) => {
+-                            entry.registered.insert(registration_id, globset);
++                        hash_map::Entry::Vacant(entry) => {
++                            entry.insert(next_id);
++                            (state.interest.clone(), next_id)
++                        }
++                    };
++                    for watcher in ops.watchers {
++                        if watcher.kind.is_some_and(|flags| flags.is_empty()) {
++                            continue;
+                         }
+-                        Err(err) => {
+-                            // Remove any old state for that registration id and
+-                            // remove the entire client if it's now empty.
+-                            entry.registered.remove(&registration_id);
+-                            if entry.registered.is_empty() {
+-                                state.remove(&client_id);
++                        let glob = match watcher.glob_pattern {
++                            helix_lsp_types::GlobPattern::String(pattern) => pattern,
++                            helix_lsp_types::GlobPattern::Relative(relative_pattern) => {
++                                let base_url = match relative_pattern.base_uri {
++                                    helix_lsp_types::OneOf::Left(folder) => folder.uri,
++                                    helix_lsp_types::OneOf::Right(url) => url,
++                                };
++                                let Ok(mut base_dir) = base_url.to_file_path() else {
++                                    log::error!(
++                                        "{} provided invalid URL for watching '{base_url}'",
++                                        client_.name(),
++                                    );
++                                    continue;
++                                };
++                                if let Ok(dir) = base_dir.canonicalize() {
++                                    base_dir = dir
++                                }
++                                let Ok(mut base_dir) = base_dir.into_os_string().into_string()
++                                else {
++                                    log::error!(
++                                        "{} provided invalid URL for watching '{base_url}' (must be valid utf-8)",
++                                        client_.name(),
++                                    );
++                                    continue;
++                                };
++                                if !base_dir.chars().next_back().is_some_and(is_separator) {
++                                    base_dir.push('/');
++                                }
++                                base_dir.push_str(&relative_pattern.pattern);
++                                base_dir
++                            }
++                        };
++                        match Glob::new(&glob) {
++                            Ok(glob) => {
++                                interest.push(Interest {
++                                    glob,
++                                    server: client_.id(),
++                                    id,
++                                    flags: watcher.kind.unwrap_or(WatchKind::all()),
++                                });
++                            }
++                            Err(err) => {
++                                log::error!(
++                                    "{} provided invalid glob for watching '{glob}': ({err})",
++                                    client_.name(),
++                                );
+                             }
+-                            log::warn!(
+-                                "Unable to build globset for LSP didChangeWatchedFiles {err}"
+-                            )
+                         }
+                     }
++                    state.rebuild_globmatcher(interest);
+                 }
+                 Event::Unregister {
+                     client_id,
+                     registration_id,
+                 } => {
+-                    log::debug!(
+-                        "Unregistering didChangeWatchedFiles with id '{}' for client '{}'",
+-                        registration_id,
+-                        client_id
+-                    );
+-                    if let Some(client_state) = state.get_mut(&client_id) {
+-                        client_state.registered.remove(&registration_id);
+-                        if client_state.registered.is_empty() {
+-                            state.remove(&client_id);
+-                        }
+-                    }
++                    let Some(client_state) = state.clients.get_mut(&client_id) else {
++                        return;
++                    };
++                    let Some(id) = client_state.registerations.remove(&*registration_id) else {
++                        return;
++                    };
++                    let interest = state
++                        .interest
++                        .iter()
++                        .filter(|it| it.server != client_id || it.id != id)
++                        .cloned()
++                        .collect();
++                    state.rebuild_globmatcher(interest);
+                 }
+                 Event::RemoveClient { client_id } => {
+                     log::debug!("Removing LSP client: {client_id}");
+-                    state.remove(&client_id);
++                    state.purge_client(client_id);
+                 }
+             }
+         }
+diff --git a/helix-term/src/application.rs b/helix-term/src/application.rs
+index ec2dcca6d829..fac91fed4db0 100644
+--- a/helix-term/src/application.rs
++++ b/helix-term/src/application.rs
+@@ -1060,8 +1060,21 @@ impl Application {
+                                                     continue;
+                                                 }
+                                             };
++                                        for watch in &ops.watchers {
++                                            if let lsp::GlobPattern::Relative(pattern) =
++                                                &watch.glob_pattern
++                                            {
++                                                let base_url = match &pattern.base_uri {
++                                                    lsp::OneOf::Left(folder) => &folder.uri,
++                                                    lsp::OneOf::Right(url) => url,
++                                                };
++                                                let Ok(base_dir) = base_url.to_file_path() else {
++                                                    continue;
++                                                };
++                                                self.editor.file_watcher.add_root(&base_dir);
++                                            }
++                                        }
+                                         self.editor.language_servers.file_event_handler.register(
+-                                            client.id(),
+                                             Arc::downgrade(client),
+                                             reg.id,
+                                             ops,
+
+From 0cf47ab64a013a91355c0091c987849020bfa275 Mon Sep 17 00:00:00 2001
+From: Pascal Kuthe <pascalkuthe@pm.me>
+Date: Fri, 19 Dec 2025 22:00:27 +0100
+Subject: [PATCH 4/4] graceously degrade when filesentry is unavailable
+
+---
+ Cargo.lock                             |   4 +-
+ helix-core/Cargo.toml                  |   3 +-
+ helix-core/src/file_watcher.rs         | 175 +++++++++-------
+ helix-term/src/commands/typed.rs       |   8 +-
+ helix-term/src/handlers.rs             |   5 +-
+ helix-term/src/handlers/auto_reload.rs | 276 ++++++++++++++++++++-----
+ helix-vcs/src/git.rs                   |  14 +-
+ helix-vcs/src/lib.rs                   | 112 +++++++++-
+ helix-view/src/editor.rs               |  47 ++++-
+ helix-view/src/handlers.rs             |  14 ++
+ helix-view/src/handlers/lsp.rs         |   4 +-
+ 11 files changed, 512 insertions(+), 150 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 5fc24ebfb2f5..b877c45960fa 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -403,9 +403,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "filesentry"
+-version = "0.2.1"
++version = "0.2.2"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "e78347b6abab87ab712230b933994b5611302f82d64747e681477adcf26dedbd"
++checksum = "1202358fd7d48c5d7a893bac4482ea89932f53e4b5b5c80071c8b5f16ae5d213"
+ dependencies = [
+  "bitflags",
+  "ecow",
+diff --git a/helix-core/Cargo.toml b/helix-core/Cargo.toml
+index c7602d2996fb..5c210e83783b 100644
+--- a/helix-core/Cargo.toml
++++ b/helix-core/Cargo.toml
+@@ -60,8 +60,7 @@ parking_lot.workspace = true
+ globset.workspace = true
+ regex-cursor = "0.1.5"
+ 
+-[target.'cfg(target_os = "linux")'.dependencies]
+-filesentry = "0.2.1"
++filesentry = "0.2.2"
+ 
+ [dev-dependencies]
+ quickcheck = { version = "1", default-features = false }
+diff --git a/helix-core/src/file_watcher.rs b/helix-core/src/file_watcher.rs
+index cd0f32daaad4..03747c23fd0b 100644
+--- a/helix-core/src/file_watcher.rs
++++ b/helix-core/src/file_watcher.rs
+@@ -3,40 +3,11 @@ use std::mem::replace;
+ use std::path::{Path, PathBuf};
+ use std::slice;
+ use std::sync::Arc;
++use std::time::SystemTime;
+ 
+-// Re-export filesentry types on Linux
+-#[cfg(target_os = "linux")]
+-pub use filesentry::{Event, EventType, Events};
++// Re-export filesentry types (available on all platforms)
++pub use filesentry::{CanonicalPathBuf, Event, EventType, Events, Filter, ShutdownOnDrop};
+ 
+-// Stub types for non-Linux platforms
+-#[cfg(not(target_os = "linux"))]
+-#[derive(Debug, Clone)]
+-pub struct Event {
+-    pub path: PathBuf,
+-    pub ty: EventType,
+-}
+-
+-#[cfg(not(target_os = "linux"))]
+-impl Event {
+-    pub fn as_std_path(&self) -> &Path {
+-        &self.path
+-    }
+-}
+-
+-#[cfg(not(target_os = "linux"))]
+-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+-pub enum EventType {
+-    Create,
+-    Delete,
+-    Modified,
+-    Tempfile,
+-}
+-
+-#[cfg(not(target_os = "linux"))]
+-pub type Events = std::sync::Arc<[Event]>;
+-
+-#[cfg(target_os = "linux")]
+-use filesentry::{Filter, ShutdownOnDrop};
+ use helix_event::{dispatch, events};
+ use ignore::gitignore::{Gitignore, GitignoreBuilder};
+ use serde::{Deserialize, Serialize};
+@@ -47,6 +18,23 @@ events! {
+     }
+ }
+ 
++/// Create an Events collection from an iterator of paths.
++/// All paths will have EventType::Modified.
++pub fn events_from_paths(paths: impl IntoIterator<Item = PathBuf>) -> Events {
++    use filesentry::CanonicalPathBuf;
++    let events: Vec<Event> = paths
++        .into_iter()
++        .filter_map(|path| {
++            let canonical = path.canonicalize().ok()?;
++            Some(Event {
++                path: CanonicalPathBuf::assert_canonicalized(&canonical),
++                ty: EventType::Modified,
++            })
++        })
++        .collect();
++    Events::from(events)
++}
++
+ /// Config for file watching
+ #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+ #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
+@@ -93,16 +81,16 @@ impl Default for Config {
+     }
+ }
+ 
+-// Linux implementation with actual file watching
+-#[cfg(target_os = "linux")]
+ pub struct Watcher {
+     watcher: Option<(filesentry::Watcher, ShutdownOnDrop)>,
+     filter: Arc<WatchFilter>,
+     roots: Vec<(PathBuf, usize)>,
+     config: Config,
++    /// Extra paths that need polling (e.g., VCS HEAD files outside workspace)
++    /// Stored with their last known mtime for change detection
++    extra_watched_paths: Vec<(PathBuf, Option<SystemTime>)>,
+ }
+ 
+-#[cfg(target_os = "linux")]
+ impl Watcher {
+     pub fn new(config: &Config) -> Watcher {
+         let mut watcher = Watcher {
+@@ -116,6 +104,7 @@ impl Watcher {
+             }),
+             roots: Vec::new(),
+             config: config.clone(),
++            extra_watched_paths: Vec::new(),
+         };
+         watcher.reload(config);
+         watcher
+@@ -124,6 +113,7 @@ impl Watcher {
+     pub fn reload(&mut self, config: &Config) {
+         let old_config = replace(&mut self.config, config.clone());
+         let (workspace, no_workspace) = helix_loader::find_workspace();
++
+         if !config.enable || config.require_workspace && no_workspace {
+             self.watcher = None;
+             return;
+@@ -150,7 +140,7 @@ impl Watcher {
+                     &mut self.watcher.insert((watcher, shutdown_guard)).0
+                 }
+                 Err(err) => {
+-                    log::error!("failed to start file-watcher: {err}");
++                    log::info!("file-watcher not available: {err}");
+                     return;
+                 }
+             },
+@@ -179,6 +169,79 @@ impl Watcher {
+         }
+     }
+ 
++    /// Returns true if the file watcher is active.
++    pub fn is_active(&self) -> bool {
++        self.watcher.is_some()
++    }
++
++    /// Check if a given path is being actively watched.
++    /// Returns true if the path is under a watched root and not filtered out.
++    pub fn is_watching(&self, path: &Path) -> bool {
++        if self.watcher.is_none() {
++            return false;
++        }
++        let path = match path.canonicalize() {
++            Ok(p) => p,
++            Err(_) => return false,
++        };
++        let (workspace, _) = helix_loader::find_workspace();
++        // Check if under workspace and not filtered
++        if path.starts_with(&workspace) && !self.filter.ignore_path_rec(&path, Some(false)) {
++            return true;
++        }
++        // Check if under any explicitly added root and not filtered
++        for (root, _) in &self.roots {
++            if path.starts_with(root) && !self.filter.ignore_path_rec(&path, Some(false)) {
++                return true;
++            }
++        }
++        false
++    }
++
++    /// Poll extra watched paths for changes and return paths that have changed.
++    /// Updates internal mtime tracking for the changed paths.
++    pub fn poll_extra_paths(&mut self) -> Vec<PathBuf> {
++        let mut changed = Vec::new();
++        for (path, last_mtime) in &mut self.extra_watched_paths {
++            let current_mtime = path.metadata().ok().and_then(|m| m.modified().ok());
++            if current_mtime != *last_mtime {
++                changed.push(path.clone());
++                *last_mtime = current_mtime;
++            }
++        }
++        changed
++    }
++
++    /// Returns true if there are extra paths that need polling.
++    pub fn has_extra_watched_paths(&self) -> bool {
++        !self.extra_watched_paths.is_empty()
++    }
++
++    /// Set extra paths to watch via polling.
++    /// These are paths outside the main watched workspace that need change detection.
++    /// Only paths outside the workspace are added (paths inside are already watched).
++    pub fn set_extra_watched_paths(&mut self, paths: Vec<PathBuf>) {
++        let (workspace, _) = helix_loader::find_workspace();
++        self.extra_watched_paths = paths
++            .into_iter()
++            .filter(|path| !path.starts_with(&workspace))
++            .map(|path| {
++                let mtime = path.metadata().ok().and_then(|m| m.modified().ok());
++                (path, mtime)
++            })
++            .collect();
++        if !self.extra_watched_paths.is_empty() {
++            log::info!(
++                "added {} extra paths for polling: {:?}",
++                self.extra_watched_paths.len(),
++                self.extra_watched_paths
++                    .iter()
++                    .map(|(p, _)| p)
++                    .collect::<Vec<_>>()
++            );
++        }
++    }
++
+     pub fn add_root(&mut self, root: &Path) {
+         let root = match root.canonicalize() {
+             Ok(root) => root,
+@@ -220,34 +283,6 @@ impl Watcher {
+     }
+ }
+ 
+-// Stub implementation for non-Linux platforms
+-#[cfg(not(target_os = "linux"))]
+-pub struct Watcher {
+-    config: Config,
+-}
+-
+-#[cfg(not(target_os = "linux"))]
+-impl Watcher {
+-    pub fn new(config: &Config) -> Watcher {
+-        Watcher {
+-            config: config.clone(),
+-        }
+-    }
+-
+-    pub fn reload(&mut self, config: &Config) {
+-        self.config = config.clone();
+-    }
+-
+-    pub fn add_root(&mut self, _root: &Path) {
+-        // No-op on non-Linux platforms
+-    }
+-
+-    pub fn remove_root(&mut self, _root: PathBuf) {
+-        // No-op on non-Linux platforms
+-    }
+-}
+-
+-#[cfg(target_os = "linux")]
+ fn build_ignore(paths: impl IntoIterator<Item = PathBuf> + Clone, dir: &Path) -> Option<Gitignore> {
+     let mut builder = GitignoreBuilder::new(dir);
+     for path in paths.clone() {
+@@ -271,13 +306,11 @@ fn build_ignore(paths: impl IntoIterator<Item = PathBuf> + Clone, dir: &Path) ->
+     }
+ }
+ 
+-#[cfg(target_os = "linux")]
+ struct IgnoreFiles {
+     root: PathBuf,
+     ignores: Vec<Arc<Gitignore>>,
+ }
+ 
+-#[cfg(target_os = "linux")]
+ impl IgnoreFiles {
+     fn new(
+         workspace_ignore: Option<Arc<Gitignore>>,
+@@ -408,7 +441,6 @@ impl IgnoreFiles {
+ /// VCS files) so ignoring a file is a performance optimization.
+ ///
+ /// By default we ignore ignored
+-#[cfg(target_os = "linux")]
+ struct WatchFilter {
+     filesentry_ignores: Gitignore,
+     ignore_files: Vec<IgnoreFiles>,
+@@ -417,7 +449,6 @@ struct WatchFilter {
+     watch_vcs: bool,
+ }
+ 
+-#[cfg(target_os = "linux")]
+ impl WatchFilter {
+     fn new<'a>(
+         config: &Config,
+@@ -467,7 +498,6 @@ impl WatchFilter {
+     }
+ }
+ 
+-#[cfg(target_os = "linux")]
+ impl filesentry::Filter for WatchFilter {
+     fn ignore_path(&self, path: &Path, is_dir: Option<bool>) -> bool {
+         let i = self
+@@ -511,7 +541,6 @@ impl filesentry::Filter for WatchFilter {
+     }
+ }
+ 
+-#[cfg(target_os = "linux")]
+ fn is_hidden(path: &Path) -> bool {
+     path.file_name().is_some_and(|it| {
+         it.as_encoded_bytes().first() == Some(&b'.')
+@@ -521,7 +550,6 @@ fn is_hidden(path: &Path) -> bool {
+ }
+ 
+ // hidden directories we want to watch by default
+-#[cfg(target_os = "linux")]
+ fn is_hardcoded_whitelist(path: &Path) -> bool {
+     path.ends_with(".helix")
+         | path.ends_with(".github")
+@@ -529,7 +557,6 @@ fn is_hardcoded_whitelist(path: &Path) -> bool {
+         | path.ends_with(".envrc")
+ }
+ 
+-#[cfg(target_os = "linux")]
+ fn is_hardcoded_blacklist(path: &Path, is_dir: bool) -> bool {
+     // don't descend into the cargo regstiry and similar
+     path.parent()
+@@ -537,12 +564,10 @@ fn is_hardcoded_blacklist(path: &Path, is_dir: bool) -> bool {
+         && is_dir
+ }
+ 
+-#[cfg(target_os = "linux")]
+ fn file_name(path: &Path) -> Option<&str> {
+     path.file_name().and_then(|it| it.to_str())
+ }
+ 
+-#[cfg(target_os = "linux")]
+ fn is_vcs_ignore(path: &Path, watch_vcs: bool) -> bool {
+     // ignore .git directory contents except .git/HEAD (and .git itself)
+     // Note: only checks immediate parent; recursive checking is done by ignore_path_rec
+@@ -559,7 +584,7 @@ fn is_vcs_ignore(path: &Path, watch_vcs: bool) -> bool {
+     }
+ }
+ 
+-#[cfg(all(test, target_os = "linux"))]
++#[cfg(test)]
+ mod tests {
+     use std::path::Path;
+ 
+diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
+index c6777830ea53..ec5751bbd73f 100644
+--- a/helix-term/src/commands/typed.rs
++++ b/helix-term/src/commands/typed.rs
+@@ -1438,8 +1438,8 @@ fn reload(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyh
+     doc.reload(view, &cx.editor.diff_providers).map(|_| {
+         view.ensure_cursor_in_view(doc, scrolloff);
+     })?;
+-    if !cfg!(any(target_os = "linux", target_os = "android")) {
+-        if let Some(path) = doc.path() {
++    if let Some(path) = doc.path() {
++        if !cx.editor.file_watcher.is_watching(path) {
+             cx.editor
+                 .language_servers
+                 .file_event_handler
+@@ -1486,8 +1486,8 @@ fn reload_all(cx: &mut compositor::Context, _args: Args, event: PromptEvent) ->
+             continue;
+         }
+ 
+-        if !cfg!(any(target_os = "linux", target_os = "android")) {
+-            if let Some(path) = doc.path() {
++        if let Some(path) = doc.path() {
++            if !cx.editor.file_watcher.is_watching(path) {
+                 cx.editor
+                     .language_servers
+                     .file_event_handler
+diff --git a/helix-term/src/handlers.rs b/helix-term/src/handlers.rs
+index 3d72505b7540..7627389a512e 100644
+--- a/helix-term/src/handlers.rs
++++ b/helix-term/src/handlers.rs
+@@ -6,6 +6,7 @@ use helix_event::AsyncHook;
+ 
+ use crate::config::Config;
+ use crate::events;
++use crate::handlers::auto_reload::PollHandler;
+ use crate::handlers::auto_save::AutoSaveHandler;
+ use crate::handlers::diagnostics::PullDiagnosticsHandler;
+ use crate::handlers::signature_help::SignatureHelpHandler;
+@@ -29,6 +30,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+     let event_tx = completion::CompletionHandler::new(config.clone()).spawn();
+     let signature_hints = SignatureHelpHandler::new().spawn();
+     let auto_save = AutoSaveHandler::new().spawn();
++    let auto_reload = PollHandler::new().spawn();
+     let document_colors = DocumentColorsHandler::default().spawn();
+     let word_index = word_index::Handler::spawn();
+     let pull_diagnostics = PullDiagnosticsHandler::default().spawn();
+@@ -38,6 +40,7 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+         completions: helix_view::handlers::completion::CompletionHandler::new(event_tx),
+         signature_hints,
+         auto_save,
++        auto_reload,
+         document_colors,
+         word_index,
+         pull_diagnostics,
+@@ -52,6 +55,6 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
+     snippet::register_hooks(&handlers);
+     document_colors::register_hooks(&handlers);
+     prompt::register_hooks(&handlers);
+-    auto_reload::register_hooks(&config.load().editor);
++    auto_reload::register_hooks(&handlers, &config.load().editor);
+     handlers
+ }
+diff --git a/helix-term/src/handlers/auto_reload.rs b/helix-term/src/handlers/auto_reload.rs
+index ac69ec2091ef..9f61b43b32ea 100644
+--- a/helix-term/src/handlers/auto_reload.rs
++++ b/helix-term/src/handlers/auto_reload.rs
+@@ -1,21 +1,29 @@
++use std::borrow::Cow;
+ use std::io;
++use std::path::PathBuf;
+ use std::sync::atomic::{self, AtomicBool};
+ use std::sync::Arc;
+-use std::time::SystemTime;
++use std::time::{Duration, SystemTime};
+ 
+-use helix_core::file_watcher::{EventType, FileSystemDidChange};
+-use helix_event::register_hook;
++use helix_core::file_watcher::{events_from_paths, EventType, FileSystemDidChange};
++use helix_event::{dispatch, register_hook, send_blocking};
+ use helix_view::editor::Config;
+ use helix_view::events::ConfigDidChange;
++use helix_view::handlers::{AutoReloadEvent, Handlers};
++use helix_view::{DocumentId, Editor};
++use tokio::time::Instant;
+ 
+-use crate::job;
++use crate::compositor::Compositor;
++use crate::ui::{Prompt, PromptEvent};
++use crate::{job, ui};
+ 
+-struct AutoReload {
++/// Handler for FileSystemDidChange events (from filesentry or polling)
++struct ReloadHandler {
+     enable: AtomicBool,
+     prompt_if_modified: AtomicBool,
+ }
+ 
+-impl AutoReload {
++impl ReloadHandler {
+     pub fn refresh_config(&self, config: &Config) {
+         self.enable
+             .store(config.auto_reload.enable, atomic::Ordering::Relaxed);
+@@ -36,84 +44,242 @@ impl AutoReload {
+         {
+             return;
+         }
+-        job::dispatch_blocking(move |editor, _| {
+-            let config = editor.config();
++        let prompt_if_modified = self.prompt_if_modified.load(atomic::Ordering::Relaxed);
++        job::dispatch_blocking(move |editor, compositor| {
+             let mut vcs_reload = false;
++
+             for fs_event in &*fs_events {
+                 if fs_event.ty != EventType::Modified {
+                     continue;
+                 }
+                 vcs_reload |= editor.diff_providers.needs_reload(fs_event);
++
+                 let Some(doc_id) = editor.document_id_by_path(fs_event.path.as_std_path()) else {
+-                    return;
+-                };
+-                let doc = doc_mut!(editor, &doc_id);
+-                let mtime = match doc.path().unwrap().metadata() {
+-                    Ok(meta) => meta.modified().unwrap_or(SystemTime::now()),
+-                    Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+-                    Err(_) => SystemTime::now(),
+-                };
+-                if mtime == doc.last_saved_time {
+                     continue;
+-                }
+-                if doc.is_modified() {
+-                    let msg = format!(
+-                        "{} auto-reload failed due to unsaved changes, use :reload to refresh",
+-                        doc.relative_path().unwrap().display()
+-                    );
+-                    editor.set_warning(msg);
+-                } else {
+-                    let scrolloff = config.scrolloff;
+-                    let view = view_mut!(editor);
+-                    match doc.reload(view, &editor.diff_providers) {
++                };
++
++                handle_document_change(editor, compositor, doc_id, prompt_if_modified);
++            }
++
++            if vcs_reload {
++                reload_vcs_diffs(editor);
++            }
++        });
++    }
++}
++
++/// Handler for polling-based change detection for unwatched files.
++/// Polls documents not covered by the file watcher (e.g., outside workspace or in ignored dirs).
++/// Co-Authored-By: Anthony Rubick <68485672+AnthonyMichaelTDM@users.noreply.github.com>
++#[derive(Debug)]
++pub(super) struct PollHandler;
++
++impl PollHandler {
++    pub fn new() -> Self {
++        PollHandler
++    }
++}
++
++impl helix_event::AsyncHook for PollHandler {
++    type Event = AutoReloadEvent;
++
++    fn handle_event(
++        &mut self,
++        event: Self::Event,
++        _existing_debounce: Option<Instant>,
++    ) -> Option<Instant> {
++        match event {
++            AutoReloadEvent::PollAfter { interval } => {
++                Some(Instant::now() + Duration::from_millis(interval))
++            }
++        }
++    }
++
++    fn finish_debounce(&mut self) {
++        job::dispatch_blocking(move |editor, _compositor| {
++            let config = editor.config();
++            if !config.auto_reload.enable || !config.auto_reload.poll.enable {
++                return;
++            }
++
++            let poll_interval = config.auto_reload.poll.interval;
++
++            // Check unwatched documents for external modifications
++            let modified_paths: Vec<PathBuf> = editor
++                .documents()
++                .filter_map(|doc| {
++                    let path = doc.path()?;
++                    // Skip documents that are being watched by filesentry
++                    if editor.file_watcher.is_watching(path) {
++                        return None;
++                    }
++                    let mtime = path.metadata().ok()?.modified().ok()?;
++                    if mtime != doc.last_saved_time {
++                        Some(path.to_path_buf())
++                    } else {
++                        None
++                    }
++                })
++                .collect();
++
++            // Poll extra watched paths (e.g., VCS HEAD files outside workspace)
++            let extra_path_changes = editor.file_watcher.poll_extra_paths();
++
++            // Dispatch changes through the FileSystemDidChange hook
++            let all_changed: Vec<PathBuf> = modified_paths
++                .into_iter()
++                .chain(extra_path_changes)
++                .collect();
++            if !all_changed.is_empty() {
++                let events = events_from_paths(all_changed);
++                dispatch(FileSystemDidChange { fs_events: events });
++            }
++
++            // Schedule next poll
++            send_blocking(
++                &editor.handlers.auto_reload,
++                AutoReloadEvent::PollAfter {
++                    interval: poll_interval,
++                },
++            );
++        });
++    }
++}
++
++/// Handler for document changes detected by filesentry or polling
++fn handle_document_change(
++    editor: &mut Editor,
++    compositor: &mut Compositor,
++    doc_id: DocumentId,
++    prompt_if_modified: bool,
++) {
++    let scrolloff = editor.config().scrolloff;
++
++    let doc = doc_mut!(editor, &doc_id);
++    let Some(path) = doc.path().cloned() else {
++        return;
++    };
++
++    let mtime = match path.metadata() {
++        Ok(meta) => meta.modified().unwrap_or(SystemTime::now()),
++        Err(err) if err.kind() == io::ErrorKind::NotFound => return,
++        Err(_) => SystemTime::now(),
++    };
++
++    if mtime == doc.last_saved_time {
++        return;
++    }
++
++    if doc.is_modified() {
++        if prompt_if_modified {
++            let path_str = doc
++                .relative_path()
++                .map(|p| p.display().to_string())
++                .unwrap_or_else(|| "[scratch]".into());
++            prompt_reload_modified(compositor, doc_id, path_str);
++        } else {
++            let msg = format!(
++                "{} changed externally but has unsaved changes, use :reload to refresh",
++                doc.relative_path().unwrap().display()
++            );
++            editor.set_warning(msg);
++        }
++    } else {
++        let view = view_mut!(editor);
++        match doc.reload(view, &editor.diff_providers) {
++            Ok(_) => {
++                view.ensure_cursor_in_view(doc, scrolloff);
++                let msg = format!(
++                    "{} reloaded (external changes)",
++                    doc.relative_path().unwrap().display()
++                );
++                editor.set_status(msg);
++            }
++            Err(err) => {
++                let doc = doc!(editor, &doc_id);
++                let msg = format!(
++                    "{} auto-reload failed: {err}",
++                    doc.relative_path().unwrap().display()
++                );
++                editor.set_error(msg);
++            }
++        }
++    }
++}
++
++/// Reload VCS diffs for all documents
++fn reload_vcs_diffs(editor: &mut Editor) {
++    for doc in editor.documents.values_mut() {
++        let Some(path) = doc.path() else {
++            continue;
++        };
++        match editor.diff_providers.get_diff_base(path) {
++            Some(diff_base) => doc.set_diff_base(diff_base),
++            None => doc.diff_handle = None,
++        }
++    }
++}
++
++/// Shows a prompt asking the user whether to reload a modified document.
++/// Co-Authored-By: Anthony Rubick <68485672+AnthonyMichaelTDM@users.noreply.github.com>
++fn prompt_reload_modified(compositor: &mut Compositor, doc_id: DocumentId, path_str: String) {
++    let prompt = Prompt::new(
++        Cow::Owned(format!(
++            "{path_str} changed externally (unsaved changes exist). Press Enter to reload, Esc to ignore: "
++        )),
++        None,
++        ui::completers::none,
++        move |cx, _input, event| {
++            match event {
++                PromptEvent::Validate => {
++                    let scrolloff = cx.editor.config().scrolloff;
++                    let doc = doc_mut!(cx.editor, &doc_id);
++                    let view = view_mut!(cx.editor);
++                    match doc.reload(view, &cx.editor.diff_providers) {
+                         Ok(_) => {
+                             view.ensure_cursor_in_view(doc, scrolloff);
+-                            let msg = format!(
+-                                "{} auto-reload external changes",
+-                                doc.relative_path().unwrap().display()
+-                            );
+-                            editor.set_status(msg);
++                            cx.editor.set_status(format!("{path_str} reloaded"));
+                         }
+                         Err(err) => {
+-                            let doc = doc!(editor, &doc_id);
+-                            let msg = format!(
+-                                "{} auto-reload failed: {err}",
+-                                doc.relative_path().unwrap().display()
+-                            );
+-                            editor.set_error(msg);
++                            cx.editor
++                                .set_error(format!("{path_str} reload failed: {err}"));
+                         }
+                     }
+                 }
+-            }
+-            if vcs_reload {
+-                for doc in editor.documents.values_mut() {
+-                    let Some(path) = doc.path() else {
+-                        continue;
+-                    };
+-                    match editor.diff_providers.get_diff_base(path) {
+-                        Some(diff_base) => doc.set_diff_base(diff_base),
+-                        None => doc.diff_handle = None,
+-                    }
++                PromptEvent::Abort => {
++                    cx.editor
++                        .set_status(format!("{path_str} external changes ignored"));
+                 }
++                PromptEvent::Update => {}
+             }
+-        });
+-    }
++        },
++    );
++    compositor.push(Box::new(prompt));
+ }
+ 
+-pub(super) fn register_hooks(config: &Config) {
+-    let handler = Arc::new(AutoReload {
++pub(super) fn register_hooks(handlers: &Handlers, config: &Config) {
++    // Register handler for FileSystemDidChange events (from filesentry)
++    let handler = Arc::new(ReloadHandler {
+         enable: config.auto_reload.enable.into(),
+         prompt_if_modified: config.auto_reload.prompt_if_modified.into(),
+     });
+     let handler_ = handler.clone();
+     register_hook!(move |event: &mut ConfigDidChange<'_>| {
+-        // when a document is initially opened, request colors for it
+         handler_.refresh_config(event.new);
+         Ok(())
+     });
+     register_hook!(move |event: &mut FileSystemDidChange| {
+-        // when a document is initially opened, request colors for it
+         handler.on_file_did_change(event);
+         Ok(())
+     });
++
++    // Start polling if enabled
++    if config.auto_reload.enable && config.auto_reload.poll.enable {
++        send_blocking(
++            &handlers.auto_reload,
++            AutoReloadEvent::PollAfter {
++                interval: config.auto_reload.poll.interval,
++            },
++        );
++    }
+ }
+diff --git a/helix-vcs/src/git.rs b/helix-vcs/src/git.rs
+index 6544c35c9e09..5ca285639119 100644
+--- a/helix-vcs/src/git.rs
++++ b/helix-vcs/src/git.rs
+@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
+ use arc_swap::ArcSwap;
+ use gix::filter::plumbing::driver::apply::Delay;
+ use std::io::Read;
+-use std::path::Path;
++use std::path::{Path, PathBuf};
+ use std::sync::Arc;
+ 
+ use gix::bstr::ByteSlice;
+@@ -83,6 +83,18 @@ pub fn for_each_changed_file(cwd: &Path, f: impl Fn(Result<FileChange>) -> bool)
+     status(&open_repo(cwd)?.to_thread_local(), f)
+ }
+ 
++/// Get the path to the HEAD file for the git repository containing the given path.
++/// This properly handles both regular repositories and worktrees.
++pub fn get_head_path(path: &Path) -> Option<PathBuf> {
++    let repo = open_repo(path).ok()?.to_thread_local();
++    // git_dir() returns the path to the actual git directory
++    // For regular repos: /path/to/repo/.git
++    // For worktrees: /path/to/main/.git/worktrees/<name>
++    let git_dir = repo.git_dir();
++    let head_path = git_dir.join("HEAD");
++    head_path.exists().then_some(head_path)
++}
++
+ fn open_repo(path: &Path) -> Result<ThreadSafeRepository> {
+     // custom open options
+     let mut git_open_opts_map = gix::sec::trust::Mapping::<gix::open::Options>::default();
+diff --git a/helix-vcs/src/lib.rs b/helix-vcs/src/lib.rs
+index e38cba6f832e..871544bea7c0 100644
+--- a/helix-vcs/src/lib.rs
++++ b/helix-vcs/src/lib.rs
+@@ -63,6 +63,16 @@ impl DiffProviderRegistry {
+             .any(|provider| provider.needs_reload(fs_event))
+     }
+ 
++    /// Get paths that need to be watched for VCS state changes.
++    /// These are paths like HEAD files that indicate branch/commit changes.
++    /// The workspace path is used to determine if the VCS metadata is external.
++    pub fn get_watched_paths(&self, workspace: &Path) -> Vec<PathBuf> {
++        self.providers
++            .iter()
++            .filter_map(|provider| provider.get_watched_path(workspace))
++            .collect()
++    }
++
+     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
+     /// iteration until `on_change` returns `false`.
+     pub fn for_each_changed_file(
+@@ -111,7 +121,25 @@ impl DiffProvider {
+     pub fn needs_reload(&self, fs_event: &helix_core::file_watcher::Event) -> bool {
+         match self {
+             #[cfg(feature = "git")]
+-            DiffProvider::Git => fs_event.path.as_std_path().ends_with(".git/HEAD"),
++            DiffProvider::Git => {
++                let path = fs_event.path.as_std_path();
++                // Check for regular .git/HEAD
++                if path.ends_with(".git/HEAD") {
++                    return true;
++                }
++                // Check for worktree HEAD at .git/worktrees/<name>/HEAD
++                if path.file_name().is_some_and(|f| f == "HEAD") {
++                    // Walk up the path to check for .git/worktrees pattern
++                    if let Some(parent) = path.parent() {
++                        if let Some(grandparent) = parent.parent() {
++                            if grandparent.ends_with(".git/worktrees") {
++                                return true;
++                            }
++                        }
++                    }
++                }
++                false
++            }
+             DiffProvider::None => false,
+         }
+     }
+@@ -143,4 +171,86 @@ impl DiffProvider {
+             Self::None => bail!("No diff support compiled in"),
+         }
+     }
++
++    /// Get the path to watch for VCS state changes (e.g., HEAD file).
++    fn get_watched_path(&self, workspace: &Path) -> Option<PathBuf> {
++        match self {
++            #[cfg(feature = "git")]
++            Self::Git => git::get_head_path(workspace),
++            Self::None => None,
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[cfg(feature = "git")]
++    #[test]
++    fn test_needs_reload_regular_git() {
++        use helix_core::file_watcher::{CanonicalPathBuf, Event, EventType};
++        use std::path::Path;
++
++        let provider = DiffProvider::Git;
++
++        // Regular .git/HEAD should trigger reload
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new("/home/user/repo/.git/HEAD")),
++            ty: EventType::Modified,
++        };
++        assert!(provider.needs_reload(&event));
++
++        // Other .git files should not trigger reload
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new("/home/user/repo/.git/config")),
++            ty: EventType::Modified,
++        };
++        assert!(!provider.needs_reload(&event));
++    }
++
++    #[cfg(feature = "git")]
++    #[test]
++    fn test_needs_reload_worktree_head() {
++        use helix_core::file_watcher::{CanonicalPathBuf, Event, EventType};
++        use std::path::Path;
++
++        let provider = DiffProvider::Git;
++
++        // Worktree HEAD at .git/worktrees/<name>/HEAD should trigger reload
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new(
++                "/home/user/main-repo/.git/worktrees/my-worktree/HEAD",
++            )),
++            ty: EventType::Modified,
++        };
++        assert!(provider.needs_reload(&event));
++
++        // Nested worktree name should also work
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new(
++                "/home/user/main-repo/.git/worktrees/feature-branch/HEAD",
++            )),
++            ty: EventType::Modified,
++        };
++        assert!(provider.needs_reload(&event));
++
++        // Non-HEAD files in worktrees should not trigger reload
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new(
++                "/home/user/main-repo/.git/worktrees/my-worktree/index",
++            )),
++            ty: EventType::Modified,
++        };
++        assert!(!provider.needs_reload(&event));
++
++        // HEAD files not in .git/worktrees should not trigger reload
++        let event = Event {
++            path: CanonicalPathBuf::assert_canonicalized(Path::new(
++                "/home/user/other/worktrees/my-worktree/HEAD",
++            )),
++            ty: EventType::Modified,
++        };
++        assert!(!provider.needs_reload(&event));
++    }
+ }
+diff --git a/helix-view/src/editor.rs b/helix-view/src/editor.rs
+index 32db6dda8653..7dd1c9942656 100644
+--- a/helix-view/src/editor.rs
++++ b/helix-view/src/editor.rs
+@@ -473,13 +473,35 @@ pub enum KittyKeyboardProtocolConfig {
+ pub struct AutoReloadConfig {
+     pub enable: bool,
+     pub prompt_if_modified: bool,
++    /// Poll for changes to files outside the watched workspace
++    pub poll: AutoReloadPoll,
+ }
+ 
+ impl Default for AutoReloadConfig {
+     fn default() -> Self {
+         AutoReloadConfig {
+             enable: true,
+-            prompt_if_modified: false,
++            prompt_if_modified: true,
++            poll: AutoReloadPoll::default(),
++        }
++    }
++}
++
++/// Configuration for polling unwatched files for external changes
++#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
++#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
++pub struct AutoReloadPoll {
++    /// Enable polling for files outside the watched workspace
++    pub enable: bool,
++    /// Polling interval in milliseconds (default: 5000)
++    pub interval: u64,
++}
++
++impl Default for AutoReloadPoll {
++    fn default() -> Self {
++        AutoReloadPoll {
++            enable: true,
++            interval: 5000,
+         }
+     }
+ }
+@@ -1346,6 +1368,15 @@ impl Editor {
+         let conf = config.load();
+         let auto_pairs = (&conf.auto_pairs).into();
+ 
++        // Initialize file watcher and diff providers
++        let mut file_watcher = Watcher::new(&conf.file_watcher);
++        let diff_providers = DiffProviderRegistry::default();
++
++        // Set up extra watched paths from VCS providers (e.g., external HEAD files for worktrees)
++        let (workspace, _) = helix_loader::find_workspace();
++        let extra_paths = diff_providers.get_watched_paths(&workspace);
++        file_watcher.set_extra_watched_paths(extra_paths);
++
+         // HAXX: offset the render area height by 1 to account for prompt/commandline
+         area.height -= 1;
+ 
+@@ -1364,7 +1395,7 @@ impl Editor {
+             theme: theme_loader.default(),
+             language_servers,
+             diagnostics: Diagnostics::new(),
+-            diff_providers: DiffProviderRegistry::default(),
++            diff_providers,
+             debug_adapters: dap::registry::Registry::new(),
+             breakpoints: HashMap::new(),
+             syn_loader,
+@@ -1390,7 +1421,7 @@ impl Editor {
+             handlers,
+             mouse_down_range: None,
+             cursor_cache: CursorCache::default(),
+-            file_watcher: Watcher::new(&conf.file_watcher),
++            file_watcher,
+         }
+     }
+ 
+@@ -1596,10 +1627,12 @@ impl Editor {
+             ls.did_rename(old_path, &new_path, is_dir);
+         }
+ 
+-        if !cfg!(any(target_os = "linux", target_os = "android")) {
++        if !self.file_watcher.is_watching(old_path) {
+             self.language_servers
+                 .file_event_handler
+                 .file_changed(old_path.to_owned());
++        }
++        if !self.file_watcher.is_watching(&new_path) {
+             self.language_servers
+                 .file_event_handler
+                 .file_changed(new_path);
+@@ -2067,12 +2100,12 @@ impl Editor {
+         let doc = doc_mut!(self, &doc_id);
+         let doc_save_future = doc.save(path, force)?;
+ 
+-        // When a file is written to, notify the file event handler.
+-        // Note: This can be removed once proper file watching is implemented.
++        // When a file is written to, notify the file event handler if the watcher isn't active.
+         let handler = self.language_servers.file_event_handler.clone();
++        let watcher_active = self.file_watcher.is_active();
+         let future = async move {
+             let res = doc_save_future.await;
+-            if !cfg!(any(target_os = "linux", target_os = "android")) {
++            if !watcher_active {
+                 if let Ok(event) = &res {
+                     handler.file_changed(event.path.clone());
+                 }
+diff --git a/helix-view/src/handlers.rs b/helix-view/src/handlers.rs
+index e2fed147b5c6..bb04bc1a0829 100644
+--- a/helix-view/src/handlers.rs
++++ b/helix-view/src/handlers.rs
+@@ -18,11 +18,18 @@ pub enum AutoSaveEvent {
+     LeftInsertMode,
+ }
+ 
++#[derive(Debug)]
++pub enum AutoReloadEvent {
++    /// Schedule a poll check after the given interval (ms)
++    PollAfter { interval: u64 },
++}
++
+ pub struct Handlers {
+     // only public because most of the actual implementation is in helix-term right now :/
+     pub completions: CompletionHandler,
+     pub signature_hints: Sender<lsp::SignatureHelpEvent>,
+     pub auto_save: Sender<AutoSaveEvent>,
++    pub auto_reload: Sender<AutoReloadEvent>,
+     pub document_colors: Sender<lsp::DocumentColorsEvent>,
+     pub word_index: word_index::Handler,
+     pub pull_diagnostics: Sender<lsp::PullDiagnosticsEvent>,
+@@ -63,6 +70,13 @@ pub fn register_hooks(handlers: &Handlers) {
+     // must be done here because the file watcher is in helix-core
+     register_hook!(move |event: &mut ConfigDidChange<'_>| {
+         event.editor.file_watcher.reload(&event.new.file_watcher);
++        // Update extra watched paths from VCS providers (e.g., external HEAD files for worktrees)
++        let (workspace, _) = helix_loader::find_workspace();
++        let extra_paths = event.editor.diff_providers.get_watched_paths(&workspace);
++        event
++            .editor
++            .file_watcher
++            .set_extra_watched_paths(extra_paths);
+         Ok(())
+     });
+ }
+diff --git a/helix-view/src/handlers/lsp.rs b/helix-view/src/handlers/lsp.rs
+index 771d4b3b08ef..33ec4c98ff24 100644
+--- a/helix-view/src/handlers/lsp.rs
++++ b/helix-view/src/handlers/lsp.rs
+@@ -248,7 +248,7 @@ impl Editor {
+                     }
+ 
+                     fs::write(path, [])?;
+-                    if !cfg!(any(target_os = "linux", target_os = "android")) {
++                    if !self.file_watcher.is_watching(path) {
+                         self.language_servers
+                             .file_event_handler
+                             .file_changed(path.to_path_buf());
+@@ -272,7 +272,7 @@ impl Editor {
+                     }
+                 } else if path.is_file() {
+                     fs::remove_file(path)?;
+-                    if !cfg!(any(target_os = "linux", target_os = "android")) {
++                    if !self.file_watcher.is_watching(path) {
+                         self.language_servers
+                             .file_event_handler
+                             .file_changed(path.to_path_buf());
+
