@@ -1,6 +1,7 @@
 use std::collections::btree_map::Entry;
 use std::collections::HashSet;
 use std::fmt::Display;
+use std::fs;
 
 use crate::editor::Action;
 use crate::events::{
@@ -245,18 +246,48 @@ impl Editor {
                     !options.overwrite.unwrap_or(false) && options.ignore_if_exists.unwrap_or(false)
                 });
                 if !ignore_if_exists || !path.exists() {
-                    self.create_path(path, false)?;
+                    // Create directory if it does not exist
+                    if let Some(dir) = path.parent() {
+                        if !dir.is_dir() {
+                            fs::create_dir_all(dir)?;
+                        }
+                    }
+
+                    fs::write(path, [])?;
+                    if !self.file_watcher.is_watching(path) {
+                        self.language_servers
+                            .file_event_handler
+                            .file_changed(path.to_path_buf());
+                    }
                 }
             }
             ResourceOp::Delete(op) => {
                 let uri = Uri::try_from(&op.uri)?;
                 let path = uri.as_path().expect("URIs are valid paths");
-                let ignore_if_not_exists = op
-                    .options
-                    .as_ref()
-                    .is_some_and(|options| options.ignore_if_not_exists.unwrap_or(false));
-                if ignore_if_not_exists && !path.exists() {
-                    return Ok(());
+                if path.is_dir() {
+                    let recursive = op
+                        .options
+                        .as_ref()
+                        .and_then(|options| options.recursive)
+                        .unwrap_or(false);
+
+                    if recursive {
+                        fs::remove_dir_all(path)?
+                    } else {
+                        fs::remove_dir(path)?
+                    }
+                    if !self.file_watcher.is_watching(path) {
+                        self.language_servers
+                            .file_event_handler
+                            .file_changed(path.to_path_buf());
+                    }
+                } else if path.is_file() {
+                    fs::remove_file(path)?;
+                    if !self.file_watcher.is_watching(path) {
+                        self.language_servers
+                            .file_event_handler
+                            .file_changed(path.to_path_buf());
+                    }
                 }
                 let recursive = op
                     .options
