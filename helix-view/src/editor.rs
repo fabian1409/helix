@@ -861,8 +861,26 @@ pub enum StatusLineElement {
     CodeActionHint,
 
     #[cfg(feature = "steel")]
-    #[serde(skip)]
-    Custom(crate::extension::steel_implementations::CustomStatusElement),
+    #[serde(skip_deserializing)]
+    Custom(
+        #[serde(serialize_with = "serialize_custom_status_element")]
+        crate::extension::steel_implementations::CustomStatusElement,
+    ),
+}
+
+// `CustomStatusElement` needs to be serializable because `get_option_value`
+// in `./helix-term/src/commands/engine/steel/mod.rs` uses `serde_json::to_value`
+// on `Config`, which panics if `CustomStatusElement` is not serializable
+// or has `#[serde(skip)]` attribute.
+#[cfg(feature = "steel")]
+fn serialize_custom_status_element<S>(
+    _element: &crate::extension::steel_implementations::CustomStatusElement,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str("custom")
 }
 
 // Cursor shape is read and used on every rendered frame and so needs
