@@ -1,0 +1,276 @@
+diff --git a/helix-term/src/commands/lsp.rs b/helix-term/src/commands/lsp.rs
+index 0494db3e..7889d1e4 100644
+--- a/helix-term/src/commands/lsp.rs
++++ b/helix-term/src/commands/lsp.rs
+@@ -23,13 +23,13 @@
+     editor::Action,
+     handlers::lsp::SignatureHelpInvoked,
+     theme::Style,
+-    Document, View,
++    Document, Theme, View,
+ };
+ 
+ use crate::{
+     compositor::{self, Compositor},
+     job::Callback,
+-    ui::{self, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
++    ui::{self, menu, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
+ };
+ 
+ use std::{cmp::Ordering, collections::HashSet, fmt::Display, future::Future, path::Path};
+@@ -159,37 +159,39 @@ fn jump_to_position(
+     }
+ }
+ 
+-fn display_symbol_kind(kind: lsp::SymbolKind) -> &'static str {
++fn display_symbol_kind(kind: lsp::SymbolKind, theme: &Theme) -> menu::Cell {
+     match kind {
+-        lsp::SymbolKind::FILE => "file",
+-        lsp::SymbolKind::MODULE => "module",
+-        lsp::SymbolKind::NAMESPACE => "namespace",
+-        lsp::SymbolKind::PACKAGE => "package",
+-        lsp::SymbolKind::CLASS => "class",
+-        lsp::SymbolKind::METHOD => "method",
+-        lsp::SymbolKind::PROPERTY => "property",
+-        lsp::SymbolKind::FIELD => "field",
+-        lsp::SymbolKind::CONSTRUCTOR => "construct",
+-        lsp::SymbolKind::ENUM => "enum",
+-        lsp::SymbolKind::INTERFACE => "interface",
+-        lsp::SymbolKind::FUNCTION => "function",
+-        lsp::SymbolKind::VARIABLE => "variable",
+-        lsp::SymbolKind::CONSTANT => "constant",
+-        lsp::SymbolKind::STRING => "string",
+-        lsp::SymbolKind::NUMBER => "number",
+-        lsp::SymbolKind::BOOLEAN => "boolean",
+-        lsp::SymbolKind::ARRAY => "array",
+-        lsp::SymbolKind::OBJECT => "object",
+-        lsp::SymbolKind::KEY => "key",
+-        lsp::SymbolKind::NULL => "null",
+-        lsp::SymbolKind::ENUM_MEMBER => "enummem",
+-        lsp::SymbolKind::STRUCT => "struct",
+-        lsp::SymbolKind::EVENT => "event",
+-        lsp::SymbolKind::OPERATOR => "operator",
+-        lsp::SymbolKind::TYPE_PARAMETER => "typeparam",
++        lsp::SymbolKind::FILE => menu::Cell::from("file"),
++        lsp::SymbolKind::MODULE => menu::Cell::from("module").style(theme.get("namespace")),
++        lsp::SymbolKind::NAMESPACE => menu::Cell::from("namespace").style(theme.get("namespace")),
++        lsp::SymbolKind::PACKAGE => menu::Cell::from("package").style(theme.get("namespace")),
++        lsp::SymbolKind::CLASS => menu::Cell::from("class").style(theme.get("type")),
++        lsp::SymbolKind::METHOD => menu::Cell::from("method").style(theme.get("function")),
++        lsp::SymbolKind::PROPERTY => menu::Cell::from("property"),
++        lsp::SymbolKind::FIELD => menu::Cell::from("field").style(theme.get("keyword")),
++        lsp::SymbolKind::CONSTRUCTOR => {
++            menu::Cell::from("construct").style(theme.get("constructor"))
++        }
++        lsp::SymbolKind::ENUM => menu::Cell::from("enum").style(theme.get("type")),
++        lsp::SymbolKind::INTERFACE => menu::Cell::from("interface").style(theme.get("type")),
++        lsp::SymbolKind::FUNCTION => menu::Cell::from("function").style(theme.get("function")),
++        lsp::SymbolKind::VARIABLE => menu::Cell::from("variable").style(theme.get("variable")),
++        lsp::SymbolKind::CONSTANT => menu::Cell::from("constant").style(theme.get("constant")),
++        lsp::SymbolKind::STRING => menu::Cell::from("string").style(theme.get("string")),
++        lsp::SymbolKind::NUMBER => menu::Cell::from("number"),
++        lsp::SymbolKind::BOOLEAN => menu::Cell::from("boolean"),
++        lsp::SymbolKind::ARRAY => menu::Cell::from("array"),
++        lsp::SymbolKind::OBJECT => menu::Cell::from("object"),
++        lsp::SymbolKind::KEY => menu::Cell::from("key"),
++        lsp::SymbolKind::NULL => menu::Cell::from("null"),
++        lsp::SymbolKind::ENUM_MEMBER => menu::Cell::from("enummem").style(theme.get("type")),
++        lsp::SymbolKind::STRUCT => menu::Cell::from("struct").style(theme.get("type")),
++        lsp::SymbolKind::EVENT => menu::Cell::from("event"),
++        lsp::SymbolKind::OPERATOR => menu::Cell::from("operator").style(theme.get("operator")),
++        lsp::SymbolKind::TYPE_PARAMETER => menu::Cell::from("typeparam").style(theme.get("type")),
+         _ => {
+             log::warn!("Unknown symbol kind: {:?}", kind);
+-            ""
++            menu::Cell::from("")
+         }
+     }
+ }
+@@ -404,11 +406,12 @@ fn nested_to_flat(
+                 Err(err) => log::error!("Error requesting document symbols: {err}"),
+             }
+         }
+-        let call = move |_editor: &mut Editor, compositor: &mut Compositor| {
++        let call = move |editor: &mut Editor, compositor: &mut Compositor| {
+             let columns = [
+-                ui::PickerColumn::new("kind", |item: &SymbolInformationItem, _| {
+-                    display_symbol_kind(item.symbol.kind).into()
+-                }),
++                ui::PickerColumn::new("kind", |item: &SymbolInformationItem, theme: &Theme| {
++                    display_symbol_kind(item.symbol.kind, theme)
++                })
++                .without_filtering(),
+                 // Some symbols in the document symbol picker may have a URI that isn't
+                 // the current file. It should be rare though, so we concatenate that
+                 // URI in with the symbol name in this picker.
+@@ -428,7 +431,7 @@ fn nested_to_flat(
+                 columns,
+                 1, // name column
+                 symbols,
+-                (),
++                editor.theme.clone(),
+                 move |cx, item, action| {
+                     jump_to_location(cx.editor, &item.location, action);
+                 },
+@@ -524,9 +527,10 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
+         .boxed()
+     };
+     let columns = [
+-        ui::PickerColumn::new("kind", |item: &SymbolInformationItem, _| {
+-            display_symbol_kind(item.symbol.kind).into()
+-        }),
++        ui::PickerColumn::new("kind", |item: &SymbolInformationItem, theme: &Theme| {
++            display_symbol_kind(item.symbol.kind, theme)
++        })
++        .without_filtering(),
+         ui::PickerColumn::new("name", |item: &SymbolInformationItem, _| {
+             item.symbol.name.as_str().into()
+         })
+@@ -554,7 +558,7 @@ pub fn workspace_symbol_picker(cx: &mut Context) {
+         columns,
+         1, // name column
+         [],
+-        (),
++        cx.editor.theme.clone(),
+         move |cx, item, action| {
+             jump_to_location(cx.editor, &item.location, action);
+         },
+diff --git a/helix-term/src/ui/completion.rs b/helix-term/src/ui/completion.rs
+index c0d3294f..d09780d9 100644
+--- a/helix-term/src/ui/completion.rs
++++ b/helix-term/src/ui/completion.rs
+@@ -13,7 +13,7 @@
+     editor::CompleteAction,
+     handlers::lsp::SignatureHelpInvoked,
+     theme::{Color, Modifier, Style},
+-    ViewId,
++    Theme, ViewId,
+ };
+ use helix_view::{graphics::Rect, Document, Editor};
+ use nucleo::{
+@@ -26,9 +26,9 @@
+ use std::cmp::Reverse;
+ 
+ impl menu::Item for CompletionItem {
+-    type Data = Style;
++    type Data = Theme;
+ 
+-    fn format(&self, dir_style: &Self::Data) -> menu::Row<'_> {
++    fn format(&self, theme: &Self::Data) -> menu::Row<'_> {
+         let deprecated = match self {
+             CompletionItem::Lsp(LspCompletionItem { item, .. }) => {
+                 item.deprecated.unwrap_or_default()
+@@ -47,21 +47,45 @@ fn format(&self, dir_style: &Self::Data) -> menu::Row<'_> {
+ 
+         let kind = match self {
+             CompletionItem::Lsp(LspCompletionItem { item, .. }) => match item.kind {
+-                Some(lsp::CompletionItemKind::TEXT) => "text".into(),
+-                Some(lsp::CompletionItemKind::METHOD) => "method".into(),
+-                Some(lsp::CompletionItemKind::FUNCTION) => "function".into(),
+-                Some(lsp::CompletionItemKind::CONSTRUCTOR) => "constructor".into(),
+-                Some(lsp::CompletionItemKind::FIELD) => "field".into(),
+-                Some(lsp::CompletionItemKind::VARIABLE) => "variable".into(),
+-                Some(lsp::CompletionItemKind::CLASS) => "class".into(),
+-                Some(lsp::CompletionItemKind::INTERFACE) => "interface".into(),
+-                Some(lsp::CompletionItemKind::MODULE) => "module".into(),
++                Some(lsp::CompletionItemKind::TEXT) => {
++                    Span::styled("text", theme.get("text")).into()
++                }
++                Some(lsp::CompletionItemKind::METHOD) => {
++                    Span::styled("method", theme.get("function")).into()
++                }
++                Some(lsp::CompletionItemKind::FUNCTION) => {
++                    Span::styled("function", theme.get("function")).into()
++                }
++                Some(lsp::CompletionItemKind::CONSTRUCTOR) => {
++                    Span::styled("constructor", theme.get("constructor")).into()
++                }
++                Some(lsp::CompletionItemKind::FIELD) => {
++                    Span::styled("field", theme.get("keyword")).into()
++                }
++                Some(lsp::CompletionItemKind::VARIABLE) => {
++                    Span::styled("variable", theme.get("variable")).into()
++                }
++                Some(lsp::CompletionItemKind::CLASS) => {
++                    Span::styled("class", theme.get("type")).into()
++                }
++                Some(lsp::CompletionItemKind::INTERFACE) => {
++                    Span::styled("interface", theme.get("type")).into()
++                }
++                Some(lsp::CompletionItemKind::MODULE) => {
++                    Span::styled("module", theme.get("namespace")).into()
++                }
+                 Some(lsp::CompletionItemKind::PROPERTY) => "property".into(),
+                 Some(lsp::CompletionItemKind::UNIT) => "unit".into(),
+                 Some(lsp::CompletionItemKind::VALUE) => "value".into(),
+-                Some(lsp::CompletionItemKind::ENUM) => "enum".into(),
+-                Some(lsp::CompletionItemKind::KEYWORD) => "keyword".into(),
+-                Some(lsp::CompletionItemKind::SNIPPET) => "snippet".into(),
++                Some(lsp::CompletionItemKind::ENUM) => {
++                    Span::styled("enum", theme.get("type")).into()
++                }
++                Some(lsp::CompletionItemKind::KEYWORD) => {
++                    Span::styled("keyword", theme.get("keyword")).into()
++                }
++                Some(lsp::CompletionItemKind::SNIPPET) => {
++                    Span::styled("snippet", theme.get("keyword")).into()
++                }
+                 Some(lsp::CompletionItemKind::COLOR) => item
+                     .documentation
+                     .as_ref()
+@@ -83,15 +107,27 @@ fn format(&self, dir_style: &Self::Data) -> menu::Row<'_> {
+                             Span::styled("■", Style::default().fg(color)),
+                         ])
+                     }),
+-                Some(lsp::CompletionItemKind::FILE) => "file".into(),
++                Some(lsp::CompletionItemKind::FILE) => {
++                    Span::styled("file", theme.get("text")).into()
++                }
+                 Some(lsp::CompletionItemKind::REFERENCE) => "reference".into(),
+-                Some(lsp::CompletionItemKind::FOLDER) => "folder".into(),
+-                Some(lsp::CompletionItemKind::ENUM_MEMBER) => "enum_member".into(),
+-                Some(lsp::CompletionItemKind::CONSTANT) => "constant".into(),
+-                Some(lsp::CompletionItemKind::STRUCT) => "struct".into(),
++                Some(lsp::CompletionItemKind::FOLDER) => {
++                    Span::styled("folder", theme.get("function")).into()
++                }
++                Some(lsp::CompletionItemKind::ENUM_MEMBER) => {
++                    Span::styled("enum_member", theme.get("type")).into()
++                }
++                Some(lsp::CompletionItemKind::CONSTANT) => {
++                    Span::styled("constant", theme.get("constant")).into()
++                }
++                Some(lsp::CompletionItemKind::STRUCT) => {
++                    Span::styled("struct", theme.get("type")).into()
++                }
+                 Some(lsp::CompletionItemKind::EVENT) => "event".into(),
+                 Some(lsp::CompletionItemKind::OPERATOR) => "operator".into(),
+-                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => "type_param".into(),
++                Some(lsp::CompletionItemKind::TYPE_PARAMETER) => {
++                    Span::styled("type_param", theme.get("type")).into()
++                }
+                 Some(kind) => {
+                     log::error!("Received unknown completion item kind: {:?}", kind);
+                     "".into()
+@@ -106,7 +142,7 @@ fn format(&self, dir_style: &Self::Data) -> menu::Row<'_> {
+             if deprecated {
+                 Style::default().add_modifier(Modifier::CROSSED_OUT)
+             } else if kind.0[0].content == "folder" {
+-                *dir_style
++                theme.get("ui.text.directory")
+             } else {
+                 Style::default()
+             },
+@@ -133,10 +169,10 @@ pub fn new(editor: &Editor, items: Vec<CompletionItem>, trigger_offset: usize) -
+         let preview_completion_insert = editor.config().preview_completion_insert;
+         let replace_mode = editor.config().completion_replace;
+ 
+-        let dir_style = editor.theme.get("ui.text.directory");
++        let theme = editor.theme.clone();
+ 
+         // Then create the menu
+-        let menu = Menu::new(items, dir_style, move |editor: &mut Editor, item, event| {
++        let menu = Menu::new(items, theme, move |editor: &mut Editor, item, event| {
+             let (view, doc) = current!(editor);
+ 
+             macro_rules! language_server {
