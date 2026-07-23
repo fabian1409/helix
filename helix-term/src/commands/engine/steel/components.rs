@@ -203,31 +203,25 @@ fn push_status_elem(
     cfg: &mut HelixConfiguration,
     side: String,
     elem: CustomStatusElement,
+    index: Option<usize>,
 ) -> Result<(), SteelErr> {
     let mut app_config = cfg.load_config();
 
-    match side.as_str() {
-        "right" => app_config
-            .editor
-            .statusline
-            .right
-            .insert(0, StatusLineElement::Custom(elem)), // insert at the front to make things nicer
-        "left" => app_config
-            .editor
-            .statusline
-            .left
-            .push(StatusLineElement::Custom(elem)),
-        "center" => app_config
-            .editor
-            .statusline
-            .center
-            .push(StatusLineElement::Custom(elem)),
+    let list = match side.as_str() {
+        "right" => &mut app_config.editor.statusline.right,
+        "left" => &mut app_config.editor.statusline.left,
+        "center" => &mut app_config.editor.statusline.center,
         _ => {
             return Err(SteelErr::new(
                 steel::rerrs::ErrorKind::Generic,
                 format!("Failed to push! Unrecognized status section: {side}"),
             ))
         }
+    };
+
+    match index {
+        Some(idx) => list.insert(idx.min(list.len()), StatusLineElement::Custom(elem)),
+        None => list.push(StatusLineElement::Custom(elem)),
     }
 
     cfg.store_config(app_config);

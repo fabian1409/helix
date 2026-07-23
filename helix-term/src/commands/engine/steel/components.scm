@@ -60,13 +60,21 @@
 ;;    * 'left
 ;;    * 'right
 ;;    * 'center
+;;
+;; `index` controls where in that side's list the element is inserted.
+;; Pass an integer to insert at that position (e.g. `1` to land right after
+;; the first existing element). Pass `#f` (or omit it) to append at the end
+;; of the list. Defaults to `0` for `'right` and `#f` for `'left`/`'center`,
+;; matching the prior hardcoded behavior.
 ;; ```scm
-;; (push-status-element! side elem)
+;; (push-status-element! side elem [index])
 ;; ```
 ;;
 ;; * side: symbol?
 ;; * elem: StatusElement?
-(define push-status-element! helix.components.push-status-element!)
+;; * index: (or/c int? #f)
+(define (push-status-element! side elem (index (if (equal? side 'right) 0 #f)))
+  (helix.components.push-status-element! side elem index))
 
 (provide async-read-line)
 (define async-read-line helix.components.async-read-line)
