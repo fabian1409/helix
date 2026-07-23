@@ -193,9 +193,15 @@ impl<T: Component> Popup<T> {
         if render_borders {
             width += 2;
         }
-        if viewport.width <= rel_x + width + 2 {
-            rel_x = viewport.width.saturating_sub(width + 2);
-            width = viewport.width.saturating_sub(rel_x + 2)
+        // `viewport.width` alone is only the *right* bound when `viewport.x`
+        // is 0. Once `editor_clipping` shifts `viewport.x` right (reserving
+        // columns for a sidebar), clamping against bare `width` undershoots
+        // by that same offset and can push `rel_x` back below `viewport.x` -
+        // i.e. into the reserved region this clip was supposed to avoid.
+        // `viewport.right()` is the actual boundary regardless of `x`.
+        if viewport.right() <= rel_x + width + 2 {
+            rel_x = viewport.right().saturating_sub(width + 2).max(viewport.x);
+            width = viewport.right().saturating_sub(rel_x + 2)
         }
 
         let area = match final_pos {
